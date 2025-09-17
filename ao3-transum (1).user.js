@@ -166,8 +166,7 @@
       // 长按功能变量
       let longPressTimer = null;
       let longPressTriggered = false;
-      let pointerHandled = false;
-      let pointerHandledReset = null;
+      let pointerHandledUntil = 0;
       let isMenuVisible = false;
       const TAP_SUPPRESS_MS = 350;
       const LONG_PRESS_SUPPRESS_MS = 1000;
@@ -195,18 +194,13 @@
         }, 200);
       };
 
-      const resetPointerHandledLater = (delay = TAP_SUPPRESS_MS) => {
-  clearTimeout(pointerHandledReset);
-  pointerHandledReset = setTimeout(() => {
-    pointerHandled = false;
-    pointerHandledReset = null;
-  }, delay);
-};
+      const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
 
-      const markPointerHandled = (delay = TAP_SUPPRESS_MS) => {
-  pointerHandled = true;
-  resetPointerHandledLater(delay);
-};
+      const markPointerHandled = (duration = 800) => {
+        pointerHandledUntil = Math.max(pointerHandledUntil, now() + duration);
+      };
+
+      const pointerHandledActive = () => now() < pointerHandledUntil;
 
       const startLongPress = () => {
         longPressTriggered = false;
@@ -261,8 +255,11 @@
       btnTranslate.addEventListener('mouseup', (e) => {
         if (e.button && e.button !== 0) return;
         const wasLongPress = finishLongPress();
-        markPointerHandled(wasLongPress ? LONG_PRESS_SUPPRESS_MS : TAP_SUPPRESS_MS);
-        if (!wasLongPress) {
+        markPointerHandled(wasLongPress ? 1200 : 800);
+        if (wasLongPress) {
+          if (e.cancelable) e.preventDefault();
+        } else {
+          if (e.cancelable) e.preventDefault();
           Controller.startTranslate();
         }
       });
@@ -282,15 +279,15 @@
       }, { passive: true });
       btnTranslate.addEventListener('touchend', (e) => {
         const wasLongPress = finishLongPress();
-        markPointerHandled(wasLongPress ? LONG_PRESS_SUPPRESS_MS : TAP_SUPPRESS_MS);
+        markPointerHandled(wasLongPress ? 1400 : 800);
+        if (e.cancelable) e.preventDefault();
         if (!wasLongPress) {
-          e.preventDefault();
           Controller.startTranslate();
         }
       }, { passive: false });
       btnTranslate.addEventListener('touchcancel', () => {
         finishLongPress();
-        markPointerHandled();
+        markPointerHandled(800);
       });
 
       // 悬浮菜单事件
@@ -316,8 +313,11 @@
       document.addEventListener('touchstart', preventSelection);
 
       // 翻译按钮点击事件
-      btnTranslate.addEventListener('click', () => {
-        if (pointerHandled) return;
+      btnTranslate.addEventListener('click', (event) => {
+        if (event && event.detail === 0) {
+          pointerHandledUntil = 0;
+        }
+        if (pointerHandledActive()) return;
         Controller.startTranslate();
       });
 
@@ -2686,10 +2686,29 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       UI.updateToolbarState(); // 更新工具栏状态
     },
     async startTranslate(){
-      if (this._isTranslating) {
-        UI.toast('翻译进行中，请稍候…');
-        return;
+      const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+
+      const existingContainer = document.querySelector('#ao3x-render');
+      if (existingContainer) {
+        const existingBlocks = existingContainer.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+        if (existingBlocks.length) {
+          const hasRenderedTranslation = Array.from(existingBlocks).some(block => {
+            const trans = block.querySelector('.ao3x-translation');
+            if (!trans) return false;
+            const html = (trans.innerHTML || '').trim();
+            if (!html) return false;
+            const text = (trans.textContent || '').trim();
+            return text && !/[（(]待译[)）]/.test(text);
+          });
+          if (hasRenderedTranslation) {
+            UI.toast('当前页面已存在译文，如需重新翻译请先清除缓存或使用重试功能。');
+          } else {
+            UI.toast('翻译任务已在进行中，请稍候完成后再试。');
+          }
+          return;
+        }
       }
+      markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
 
       if (this.hasTranslationBlocks()) {
         UI.toast('已存在译文，如需重新翻译请先清除缓存或重试失败的段落');
