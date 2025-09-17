@@ -2559,13 +2559,15 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
     // 重试选中的块（手动选择）
     async retrySelectedBlocks(selectedIndices){
-      if (!selectedIndices || !selectedIndices.length) {
+      const normalized = Array.from(new Set((selectedIndices || []).map(i => Number(i)).filter(i => Number.isInteger(i) && i >= 0))).sort((a, b) => a - b);
+      if (!normalized.length) {
         UI.toast('未选择要重试的块');
         return;
       }
 
       const s = settings.get();
-      UI.toast(`开始重试 ${selectedIndices.length} 个选中块…`);
+      const totalSelected = normalized.length;
+      UI.toast(`开始重试 ${totalSelected} 个选中块…`);
 
       const c = document.querySelector('#ao3x-render');
       if (!c) {
@@ -2574,41 +2576,52 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }
 
       // 彻底清理选中块的所有缓存和状态
-      selectedIndices.forEach(i => {
+      const minIndex = normalized[0];
+      normalized.forEach(i => {
         // 清除TransStore中的旧翻译和完成状态
         TransStore.set(String(i), '');
         if (TransStore._done) delete TransStore._done[i];
 
-        // 清理RenderState中的应用状态
-        if (RenderState && RenderState.lastApplied) {
-          RenderState.lastApplied[i] = '';
-        }
-
         // 清理Streamer中的缓冲区
-        if (typeof Streamer !== 'undefined' && Streamer._buf) {
+        if (typeof Streamer !== 'undefined' && typeof Streamer.reset === 'function') {
+          Streamer.reset(i);
+        } else if (typeof Streamer !== 'undefined') {
           Streamer._buf[i] = '';
           Streamer._dirty[i] = false;
         }
 
         // 重置DOM显示为待译状态
-        const anchor = c.querySelector(`[data-chunk-id="${i}"]`);
-        if (anchor) {
-          let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
-          if (transDiv) {
-            transDiv.innerHTML = '<span class="ao3x-muted">（重新翻译中…）</span>';
-            // 强制重新设置最小高度
-            transDiv.style.minHeight = '60px';
-          }
+        Controller.applyDirect(i, '<span class="ao3x-muted">（重新翻译中…）</span>');
+        const anchorEl = c.querySelector(`[data-chunk-id="${i}"]`);
+        if (anchorEl) {
+          const transDiv = anchorEl.parentElement.querySelector('.ao3x-translation');
+          if (transDiv) transDiv.style.minHeight = '60px';
+        }
+        if (RenderState && RenderState.lastApplied) {
+          RenderState.lastApplied[i] = '';
         }
       });
 
+      if (TransStore && typeof TransStore.saveToCache === 'function') {
+        TransStore.saveToCache();
+      }
+
+      if (RenderState) {
+        if (typeof RenderState.nextToRender === 'number') {
+          RenderState.nextToRender = Math.min(RenderState.nextToRender, minIndex);
+        } else {
+          RenderState.nextToRender = minIndex;
+        }
+      }
+
       // 构造子计划（复用 data-original-html）
-      const subPlan = selectedIndices.map(i => {
+      const subPlan = normalized.map(i => {
         const block = c.querySelector(`.ao3x-block[data-index="${i}"]`);
         const html = block ? (block.getAttribute('data-original-html') || '') : '';
         return { index: i, html };
       });
 
+      const queue = normalized.slice();
       // 状态计数
       let inFlight = 0, completed = 0, failed = 0;
       updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
@@ -2618,6 +2631,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         if (!planItem || !planItem.html) {
           failed++;
           updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+          if (queue.length) setTimeout(launchNext, 0);
           return;
         }
 
@@ -2645,6 +2659,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(idx);
             TransStore.set(String(idx), '');
             if (TransStore._done) delete TransStore._done[idx];
+            if (TransStore && typeof TransStore.saveToCache === 'function') {
+              TransStore.saveToCache();
+            }
             if (RenderState && RenderState.lastApplied) RenderState.lastApplied[idx] = '';
             Controller.applyDirect(idx, '<span class="ao3x-muted">（重试中…）</span>');
           },
@@ -2677,7 +2694,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
 
             // 检查是否所有选中的块都完成了
-            if (completed + failed >= selectedIndices.length) {
+            if (completed + failed >= totalSelected) {
               // 清理状态显示，恢复正常显示
               setTimeout(() => {
                 const kvElement = document.querySelector('#ao3x-kv');
@@ -2690,6 +2707,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                 UI.updateToolbarState();
               }, 1000);
             }
+
+            setTimeout(launchNext, 0);
           },
           onError: (e) => {
             inFlight--; failed++;
@@ -2705,7 +2724,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
 
             // 检查是否所有选中的块都完成了
-            if (completed + failed >= selectedIndices.length) {
+            if (completed + failed >= totalSelected) {
               // 清理状态显示，恢复正常显示
               setTimeout(() => {
                 const kvElement = document.querySelector('#ao3x-kv');
@@ -2718,37 +2737,28 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                 UI.updateToolbarState();
               }, 1000);
             }
+
+            setTimeout(launchNext, 0);
           }
         });
       };
 
       // 按设置并发数重试选中的块
       const conc = Math.max(1, Math.min(4, s.concurrency || 2));
-      let ptr = 0;
 
-      const processNext = () => {
-        while (ptr < selectedIndices.length) {
-          const i = selectedIndices[ptr++];
-          postOne(i);
-
-          // 达到并发限制时暂停
-          if (inFlight >= conc) {
-            break;
-          }
-        }
-
-        // 如果还有未处理的块，稍后继续
-        if (ptr < selectedIndices.length && inFlight < conc) {
-          setTimeout(processNext, 100);
+      const launchNext = () => {
+        while (inFlight < conc && queue.length) {
+          const nextIdx = queue.shift();
+          postOne(nextIdx);
         }
       };
 
       // 开始处理
-      processNext();
+      launchNext();
 
       // 监控完成状态
       const checkCompletion = () => {
-        if (completed + failed >= selectedIndices.length) {
+        if (completed + failed >= totalSelected) {
           UI.toast(`选中块重试完成：成功 ${completed}，失败 ${failed}`);
 
           // 最后兜底刷新
