@@ -165,7 +165,9 @@
 
       // 长按功能变量
       let longPressTimer = null;
-      let isLongPress = false;
+      let longPressTriggered = false;
+      let pointerHandled = false;
+      let pointerHandledReset = null;
       let isMenuVisible = false;
 
       // 显示/隐藏悬浮菜单
@@ -191,52 +193,77 @@
         }, 200);
       };
 
+      const resetPointerHandledLater = () => {
+        clearTimeout(pointerHandledReset);
+        pointerHandledReset = setTimeout(() => {
+          pointerHandled = false;
+          pointerHandledReset = null;
+        }, 350);
+      };
+
+      const markPointerHandled = () => {
+        pointerHandled = true;
+        resetPointerHandledLater();
+      };
+
       const startLongPress = () => {
-        isLongPress = false;
+        longPressTriggered = false;
+        clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
-          isLongPress = true;
+          longPressTriggered = true;
           showFloatingMenu();
         }, 800); // 0.8秒长按
       };
 
-      const cancelLongPress = () => {
+      const finishLongPress = () => {
         clearTimeout(longPressTimer);
-        // 长按完成后不要立即隐藏菜单，让用户可以点击
-        // 重置长按状态需要延迟，避免影响click事件
-        setTimeout(() => {
-          isLongPress = false;
-        }, 50);
+        const wasLongPress = longPressTriggered;
+        longPressTriggered = false;
+        return wasLongPress;
+      };
+
+      const cancelLongPress = () => {
+        finishLongPress();
       };
 
       // iOS Safari文本选择防护
       const preventSelection = (e) => {
-        // 检查是否有target和closest方法
-        if (e.target && typeof e.target.closest === 'function') {
-          if (e.target.closest('.ao3x-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }
-        } else if (e.target) {
-          // 向上遍历DOM树查找匹配的元素（兼容性fallback）
-          let element = e.target;
-          while (element && element !== document) {
-            if (element.classList && element.classList.contains('ao3x-btn')) {
-              e.preventDefault();
-              e.stopPropagation();
-              return false;
+        const target = e.target;
+        if (!target) return;
+        let btn = null;
+        if (typeof target.closest === 'function') {
+          btn = target.closest('.ao3x-btn');
+        } else {
+          let el = target;
+          while (el && el !== document) {
+            if (el.classList && el.classList.contains('ao3x-btn')) {
+              btn = el;
+              break;
             }
-            element = element.parentNode;
+            el = el.parentNode;
           }
         }
+        if (!btn) return;
+        if (e.type === 'touchstart') return; // 允许触摸事件冒泡以保证点击触发
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
       };
 
       // 鼠标事件（桌面）
       btnTranslate.addEventListener('mousedown', (e) => {
+        if (e.button && e.button !== 0) return;
         preventSelection(e);
         startLongPress();
       });
-      btnTranslate.addEventListener('mouseup', cancelLongPress);
+      btnTranslate.addEventListener('mouseup', (e) => {
+        if (e.button && e.button !== 0) return;
+        const wasLongPress = finishLongPress();
+        markPointerHandled();
+        if (!wasLongPress) {
+          Controller.startTranslate();
+        }
+      });
       btnTranslate.addEventListener('mouseleave', () => {
         cancelLongPress();
         // 鼠标离开时也隐藏菜单
@@ -249,11 +276,20 @@
 
       // 触摸事件（移动设备）
       btnTranslate.addEventListener('touchstart', (e) => {
-        preventSelection(e);
         startLongPress();
+      }, { passive: true });
+      btnTranslate.addEventListener('touchend', (e) => {
+        const wasLongPress = finishLongPress();
+        markPointerHandled();
+        if (!wasLongPress) {
+          e.preventDefault();
+          Controller.startTranslate();
+        }
+      }, { passive: false });
+      btnTranslate.addEventListener('touchcancel', () => {
+        finishLongPress();
+        markPointerHandled();
       });
-      btnTranslate.addEventListener('touchend', cancelLongPress);
-      btnTranslate.addEventListener('touchcancel', cancelLongPress);
 
       // 悬浮菜单事件
       floatingMenu.addEventListener('mouseleave', () => {
@@ -278,10 +314,9 @@
       document.addEventListener('touchstart', preventSelection);
 
       // 翻译按钮点击事件
-      btnTranslate.addEventListener('click', (e) => {
-        if (!isLongPress) {
-          Controller.startTranslate();
-        }
+      btnTranslate.addEventListener('click', () => {
+        if (pointerHandled) return;
+        Controller.startTranslate();
       });
 
       // 总结按钮事件
@@ -736,7 +771,7 @@
       .ao3x-fab-wrap{position:fixed;right:12px;top:50%;transform:translateY(-50%);z-index:999999;display:flex;flex-direction:column;gap:8px;opacity:0.6;transition:opacity .3s;pointer-events:auto}
       .ao3x-fab-wrap:hover{opacity:1}
       .ao3x-fab-wrap.hidden{opacity:0;pointer-events:none}
-      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px)}
+      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
       .ao3x-btn:hover{background:rgba(255,255,255,.95);box-shadow:0 4px 12px rgba(179,0,0,.15);transform:translateY(-1px)}
       .ao3x-btn:active{transform:scale(.98)}
 
