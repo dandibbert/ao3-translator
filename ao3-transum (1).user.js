@@ -165,7 +165,8 @@
 
       // 长按功能变量
       let longPressTimer = null;
-      let isLongPress = false;
+      let longPressTriggered = false;
+      let pointerHandledUntil = 0;
       let isMenuVisible = false;
 
       // 显示/隐藏悬浮菜单
@@ -191,52 +192,75 @@
         }, 200);
       };
 
+      const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+
+      const markPointerHandled = (duration = 800) => {
+        pointerHandledUntil = Math.max(pointerHandledUntil, now() + duration);
+      };
+
+      const pointerHandledActive = () => now() < pointerHandledUntil;
+
       const startLongPress = () => {
-        isLongPress = false;
+        longPressTriggered = false;
+        clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
-          isLongPress = true;
+          longPressTriggered = true;
           showFloatingMenu();
         }, 800); // 0.8秒长按
       };
 
-      const cancelLongPress = () => {
+      const finishLongPress = () => {
         clearTimeout(longPressTimer);
-        // 长按完成后不要立即隐藏菜单，让用户可以点击
-        // 重置长按状态需要延迟，避免影响click事件
-        setTimeout(() => {
-          isLongPress = false;
-        }, 50);
+        const wasLongPress = longPressTriggered;
+        longPressTriggered = false;
+        return wasLongPress;
+      };
+
+      const cancelLongPress = () => {
+        finishLongPress();
       };
 
       // iOS Safari文本选择防护
       const preventSelection = (e) => {
-        // 检查是否有target和closest方法
-        if (e.target && typeof e.target.closest === 'function') {
-          if (e.target.closest('.ao3x-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }
-        } else if (e.target) {
-          // 向上遍历DOM树查找匹配的元素（兼容性fallback）
-          let element = e.target;
-          while (element && element !== document) {
-            if (element.classList && element.classList.contains('ao3x-btn')) {
-              e.preventDefault();
-              e.stopPropagation();
-              return false;
+        const target = e.target;
+        if (!target) return;
+        let btn = null;
+        if (typeof target.closest === 'function') {
+          btn = target.closest('.ao3x-btn');
+        } else {
+          let el = target;
+          while (el && el !== document) {
+            if (el.classList && el.classList.contains('ao3x-btn')) {
+              btn = el;
+              break;
             }
-            element = element.parentNode;
+            el = el.parentNode;
           }
         }
+        if (!btn) return;
+        if (e.type === 'touchstart') return; // 允许触摸事件冒泡以保证点击触发
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
       };
 
       // 鼠标事件（桌面）
       btnTranslate.addEventListener('mousedown', (e) => {
+        if (e.button && e.button !== 0) return;
         preventSelection(e);
         startLongPress();
       });
-      btnTranslate.addEventListener('mouseup', cancelLongPress);
+      btnTranslate.addEventListener('mouseup', (e) => {
+        if (e.button && e.button !== 0) return;
+        const wasLongPress = finishLongPress();
+        markPointerHandled(wasLongPress ? 1200 : 800);
+        if (wasLongPress) {
+          if (e.cancelable) e.preventDefault();
+        } else {
+          if (e.cancelable) e.preventDefault();
+          Controller.startTranslate();
+        }
+      });
       btnTranslate.addEventListener('mouseleave', () => {
         cancelLongPress();
         // 鼠标离开时也隐藏菜单
@@ -249,11 +273,20 @@
 
       // 触摸事件（移动设备）
       btnTranslate.addEventListener('touchstart', (e) => {
-        preventSelection(e);
         startLongPress();
+      }, { passive: true });
+      btnTranslate.addEventListener('touchend', (e) => {
+        const wasLongPress = finishLongPress();
+        markPointerHandled(wasLongPress ? 1400 : 800);
+        if (e.cancelable) e.preventDefault();
+        if (!wasLongPress) {
+          Controller.startTranslate();
+        }
+      }, { passive: false });
+      btnTranslate.addEventListener('touchcancel', () => {
+        finishLongPress();
+        markPointerHandled(800);
       });
-      btnTranslate.addEventListener('touchend', cancelLongPress);
-      btnTranslate.addEventListener('touchcancel', cancelLongPress);
 
       // 悬浮菜单事件
       floatingMenu.addEventListener('mouseleave', () => {
@@ -278,10 +311,12 @@
       document.addEventListener('touchstart', preventSelection);
 
       // 翻译按钮点击事件
-      btnTranslate.addEventListener('click', (e) => {
-        if (!isLongPress) {
-          Controller.startTranslate();
+      btnTranslate.addEventListener('click', (event) => {
+        if (event && event.detail === 0) {
+          pointerHandledUntil = 0;
         }
+        if (pointerHandledActive()) return;
+        Controller.startTranslate();
       });
 
       // 总结按钮事件
@@ -736,7 +771,7 @@
       .ao3x-fab-wrap{position:fixed;right:12px;top:50%;transform:translateY(-50%);z-index:999999;display:flex;flex-direction:column;gap:8px;opacity:0.6;transition:opacity .3s;pointer-events:auto}
       .ao3x-fab-wrap:hover{opacity:1}
       .ao3x-fab-wrap.hidden{opacity:0;pointer-events:none}
-      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px)}
+      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
       .ao3x-btn:hover{background:rgba(255,255,255,.95);box-shadow:0 4px 12px rgba(179,0,0,.15);transform:translateY(-1px)}
       .ao3x-btn:active{transform:scale(.98)}
 
@@ -2646,6 +2681,27 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     },
     async startTranslate(){
       const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+
+      const existingContainer = document.querySelector('#ao3x-render');
+      if (existingContainer) {
+        const existingBlocks = existingContainer.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+        if (existingBlocks.length) {
+          const hasRenderedTranslation = Array.from(existingBlocks).some(block => {
+            const trans = block.querySelector('.ao3x-translation');
+            if (!trans) return false;
+            const html = (trans.innerHTML || '').trim();
+            if (!html) return false;
+            const text = (trans.textContent || '').trim();
+            return text && !/[（(]待译[)）]/.test(text);
+          });
+          if (hasRenderedTranslation) {
+            UI.toast('当前页面已存在译文，如需重新翻译请先清除缓存或使用重试功能。');
+          } else {
+            UI.toast('翻译任务已在进行中，请稍候完成后再试。');
+          }
+          return;
+        }
+      }
       markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
 
       // 重置缓存显示状态，因为现在要开始新的翻译
