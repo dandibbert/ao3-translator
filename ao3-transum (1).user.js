@@ -556,27 +556,42 @@
       `;
       document.body.appendChild(mask); document.body.appendChild(panel);
       panel.addEventListener('click', e => e.stopPropagation());
-      $('#ao3x-close-x', panel).addEventListener('click', UI.closePanel);
+      const closeBtn = $('#ao3x-close-x', panel);
+      if (closeBtn) {
+        closeBtn.addEventListener('click', UI.closePanel);
+      } else {
+        d('ui:close-btn-missing');
+      }
 
       const fetchBtn = $('#ao3x-fetch-models', panel);
       const fetchSummaryBtn = $('#ao3x-fetch-summary-models', panel);
       const translateBrowserBox = $('#ao3x-translate-model-browser', panel);
       const summaryBrowserBox = $('#ao3x-summary-model-browser', panel);
 
-      fetchBtn.addEventListener('click', async () => {
-        translateBrowserBox.style.display = 'block';
-        await ModelBrowser.fetchAndRender(panel, 'translate');
-        UI.toast('翻译模型列表已更新');
-      });
+      if (fetchBtn && translateBrowserBox) {
+        fetchBtn.addEventListener('click', async () => {
+          translateBrowserBox.style.display = 'block';
+          await ModelBrowser.fetchAndRender(panel, 'translate');
+          UI.toast('翻译模型列表已更新');
+        });
+      }
 
-      fetchSummaryBtn.addEventListener('click', async () => {
-        summaryBrowserBox.style.display = 'block';
-        await ModelBrowser.fetchAndRender(panel, 'summary');
-        UI.toast('总结模型列表已更新');
-      });
+      if (fetchSummaryBtn && summaryBrowserBox) {
+        fetchSummaryBtn.addEventListener('click', async () => {
+          summaryBrowserBox.style.display = 'block';
+          await ModelBrowser.fetchAndRender(panel, 'summary');
+          UI.toast('总结模型列表已更新');
+        });
+      }
 
-      $('#ao3x-translate-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel, 'translate'));
-      $('#ao3x-summary-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel, 'summary'));
+      const translateModelSearch = $('#ao3x-translate-model-q', panel);
+      if (translateModelSearch) {
+        translateModelSearch.addEventListener('input', () => ModelBrowser.filter(panel, 'translate'));
+      }
+      const summaryModelSearch = $('#ao3x-summary-model-q', panel);
+      if (summaryModelSearch) {
+        summaryModelSearch.addEventListener('input', () => ModelBrowser.filter(panel, 'summary'));
+      }
 
       const autosave = () => {
         // 检查翻译模型变更时的同步逻辑
@@ -594,16 +609,20 @@
       };
 
       // 专门监听翻译模型输入框的变化
-      $('#ao3x-translate-model', panel).addEventListener('input', debounce(() => {
-        const translateModel = $('#ao3x-translate-model', panel).value.trim();
-        const summaryModel = $('#ao3x-summary-model', panel).value.trim();
+      const translateModelInput = $('#ao3x-translate-model', panel);
+      if (translateModelInput) {
+        translateModelInput.addEventListener('input', debounce(() => {
+          const translateModel = $('#ao3x-translate-model', panel)?.value.trim() || '';
+          const summaryModel = $('#ao3x-summary-model', panel)?.value.trim() || '';
 
-        // 如果总结模型为空，则自动同步翻译模型的值
-        if (!summaryModel && translateModel) {
-          $('#ao3x-summary-model', panel).value = translateModel;
-        }
-        autosave();
-      }, 300));
+          // 如果总结模型为空，则自动同步翻译模型的值
+          if (!summaryModel && translateModel) {
+            const summaryInput = $('#ao3x-summary-model', panel);
+            if (summaryInput) summaryInput.value = translateModel;
+          }
+          autosave();
+        }, 300));
+      }
 
       panel.addEventListener('input', debounce(autosave, 300), true);
       panel.addEventListener('change', autosave, true);
