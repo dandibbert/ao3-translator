@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
+// @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      0.8.2
+// @version      0.8.3
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -31,8 +31,8 @@
         reasoningEffort: -1  // -1不发送, 'none'/'low'/'medium'/'high'才发送
       },
       prompt: {
-        system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，语气自然流畅。',
-        userTemplate: '请将以下 AO3 正文完整翻译为中文，人名保持原文，术语翻译时意译，以保证不了解者也能看懂为准则，保持 HTML 结构与行内标记，仅替换可见文本内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
+        system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，语气自然流畅。可以调整语序用词，但不要省略有实质性内容的语句。请保证译文地道，自然，有韵味，符合原文语气和上下文情境。',
+        userTemplate: '你是一个专业的文学翻译助手，请将以下 AO3 正文完整翻译为中文，保证译文地道，自然，有韵味，符合原文语气和上下文情境。人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，保持 HTML 结构与行内标记，仅替换可见文本内容，不要漏翻除人名外的英文内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
       },
       summary: {
         model: { id: '', contextWindow: 16000 },
