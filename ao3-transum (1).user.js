@@ -169,6 +169,8 @@
       let pointerHandled = false;
       let pointerHandledReset = null;
       let isMenuVisible = false;
+      const TAP_SUPPRESS_MS = 350;
+      const LONG_PRESS_SUPPRESS_MS = 1000;
 
       // 显示/隐藏悬浮菜单
       const showFloatingMenu = () => {
@@ -193,18 +195,18 @@
         }, 200);
       };
 
-      const resetPointerHandledLater = () => {
-        clearTimeout(pointerHandledReset);
-        pointerHandledReset = setTimeout(() => {
-          pointerHandled = false;
-          pointerHandledReset = null;
-        }, 350);
-      };
+      const resetPointerHandledLater = (delay = TAP_SUPPRESS_MS) => {
+  clearTimeout(pointerHandledReset);
+  pointerHandledReset = setTimeout(() => {
+    pointerHandled = false;
+    pointerHandledReset = null;
+  }, delay);
+};
 
-      const markPointerHandled = () => {
-        pointerHandled = true;
-        resetPointerHandledLater();
-      };
+      const markPointerHandled = (delay = TAP_SUPPRESS_MS) => {
+  pointerHandled = true;
+  resetPointerHandledLater(delay);
+};
 
       const startLongPress = () => {
         longPressTriggered = false;
@@ -259,7 +261,7 @@
       btnTranslate.addEventListener('mouseup', (e) => {
         if (e.button && e.button !== 0) return;
         const wasLongPress = finishLongPress();
-        markPointerHandled();
+        markPointerHandled(wasLongPress ? LONG_PRESS_SUPPRESS_MS : TAP_SUPPRESS_MS);
         if (!wasLongPress) {
           Controller.startTranslate();
         }
@@ -280,7 +282,7 @@
       }, { passive: true });
       btnTranslate.addEventListener('touchend', (e) => {
         const wasLongPress = finishLongPress();
-        markPointerHandled();
+        markPointerHandled(wasLongPress ? LONG_PRESS_SUPPRESS_MS : TAP_SUPPRESS_MS);
         if (!wasLongPress) {
           e.preventDefault();
           Controller.startTranslate();
@@ -2162,9 +2164,13 @@
 
   /* ================= Controller ================= */
   const Controller = {
+    _isTranslating: false,
 
-
-
+    hasTranslationBlocks() {
+      const container = document.querySelector('#ao3x-render');
+      if (!container) return false;
+      return !!container.querySelector('.ao3x-block:not(.ao3x-summary-block)');
+    },
 
     // 获取作品名和章节名
     getWorkInfo() {
@@ -2680,97 +2686,114 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       UI.updateToolbarState(); // 更新工具栏状态
     },
     async startTranslate(){
-      const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
-      markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
-
-      // 重置缓存显示状态，因为现在要开始新的翻译
-      View.setShowingCache(false);
-      UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
-
-      const s = settings.get();
-      const allHtml = nodes.map(n=>n.innerHTML);
-      const fullHtml = allHtml.join('\n');
-      const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
-      const reserve = s.planner?.reserve ?? 384;
-      const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
-
-      // 固定prompt token（不含正文）
-      const promptTokens = await estimatePromptTokensFromMessages([
-        { role:'system', content: s.prompt.system || '' },
-        { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
-      ]);
-
-      const allText = stripHtmlToText(fullHtml);
-      const allEstIn = await estimateTokensForText(allText);
-
-      const cw   = s.model.contextWindow || 8192;
-      const maxT = s.gen.maxTokens || 1024;
-      // ★ 核心预算：k<1 时更“能塞”
-      // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
-      // 约束2：prompt + in + out + reserve ≤ cw → in(1+k) ≤ (cw - prompt - reserve)
-      const cap1 = maxT / ratio;
-      const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
-      const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
-      const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
-
-      const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
-      const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
-
-      d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
-
-      // 规划
-      let plan = [];
-      if (canSingle) {
-        const inTok = await estimateTokensForText(allText);
-        plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
-      } else {
-        plan = await packIntoChunks(allHtml, maxInputBudget);
+      if (this._isTranslating) {
+        UI.toast('翻译进行中，请稍候…');
+        return;
       }
-      d('plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
 
-      renderPlanAnchors(plan);
-      View.setMode('trans');
-      RenderState.setTotal(plan.length);
-      Bilingual.setTotal(plan.length);
-      updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+      if (this.hasTranslationBlocks()) {
+        UI.toast('已存在译文，如需重新翻译请先清除缓存或重试失败的段落');
+        return;
+      }
 
-      // 运行
+      this._isTranslating = true;
       try {
-        if (plan.length === 1 && canSingle && (s.planner?.trySingleShotOnce !== false)) {
-          View.info('单次请求翻译中…');
-          await this.translateSingle({
+        const nodes = collectChapterUserstuffSmart();
+        if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+
+        markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
+
+        // 重置缓存显示状态，因为现在要开始新的翻译
+        View.setShowingCache(false);
+        UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
+
+        const s = settings.get();
+        const allHtml = nodes.map(n=>n.innerHTML);
+        const fullHtml = allHtml.join('\n');
+        const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
+        const reserve = s.planner?.reserve ?? 384;
+        const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
+
+        // 固定prompt token（不含正文）
+        const promptTokens = await estimatePromptTokensFromMessages([
+          { role:'system', content: s.prompt.system || '' },
+          { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
+        ]);
+
+        const allText = stripHtmlToText(fullHtml);
+        const allEstIn = await estimateTokensForText(allText);
+
+        const cw   = s.model.contextWindow || 8192;
+        const maxT = s.gen.maxTokens || 1024;
+        // ★ 核心预算：k<1 时更“能塞”
+        // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
+        // 约束2：prompt + in + out + reserve ≤ cw → in(1+k) ≤ (cw - prompt - reserve)
+        const cap1 = maxT / ratio;
+        const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
+        const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
+        const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
+
+        const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
+        const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
+
+        d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
+
+        // 规划
+        let plan = [];
+        if (canSingle) {
+          const inTok = await estimateTokensForText(allText);
+          plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
+        } else {
+          plan = await packIntoChunks(allHtml, maxInputBudget);
+        }
+        d('plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
+
+        renderPlanAnchors(plan);
+        View.setMode('trans');
+        RenderState.setTotal(plan.length);
+        Bilingual.setTotal(plan.length);
+        updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+
+        // 运行
+        try {
+          if (plan.length === 1 && canSingle && (s.planner?.trySingleShotOnce !== false)) {
+            View.info('单次请求翻译中…');
+            await this.translateSingle({
+              endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
+              key: s.api.key,
+              stream: s.stream.enabled,
+              modelCw: s.model.contextWindow,
+              ratio,
+              promptTokens,
+              reserve,
+              contentHtml: plan[0].html,
+              inTok: plan[0].inTok,
+              userMaxTokens: s.gen.maxTokens
+            });
+            View.clearInfo();
+            finalFlushAll(1);
+            return;
+          }
+          View.info('文本较长：已启用智能分段 + 并发流水线…');
+          await this.translateConcurrent({
             endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
             key: s.api.key,
+            plan,
+            concurrency: s.concurrency,
             stream: s.stream.enabled,
             modelCw: s.model.contextWindow,
             ratio,
             promptTokens,
             reserve,
-            contentHtml: plan[0].html,
-            inTok: plan[0].inTok,
             userMaxTokens: s.gen.maxTokens
           });
           View.clearInfo();
-          finalFlushAll(1);
-          return;
+        } catch(e) {
+          d('fatal', e);
+          UI.toast('翻译失败：' + e.message);
         }
-        View.info('文本较长：已启用智能分段 + 并发流水线…');
-        await this.translateConcurrent({
-          endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
-          key: s.api.key,
-          plan,
-          concurrency: s.concurrency,
-          stream: s.stream.enabled,
-          modelCw: s.model.contextWindow,
-          ratio,
-          promptTokens,
-          reserve,
-          userMaxTokens: s.gen.maxTokens
-        });
-        View.clearInfo();
-      } catch(e) {
-        d('fatal', e);
-        UI.toast('翻译失败：' + e.message);
+      } finally {
+        this._isTranslating = false;
       }
     },
 
