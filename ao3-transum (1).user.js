@@ -165,8 +165,12 @@
 
       // 长按功能变量
       let longPressTimer = null;
-      let isLongPress = false;
+      let longPressTriggered = false;
+      let pointerHandled = false;
+      let pointerHandledReset = null;
       let isMenuVisible = false;
+      const TAP_SUPPRESS_MS = 350;
+      const LONG_PRESS_SUPPRESS_MS = 1000;
 
       // 显示/隐藏悬浮菜单
       const showFloatingMenu = () => {
@@ -191,52 +195,77 @@
         }, 200);
       };
 
+      const resetPointerHandledLater = (delay = TAP_SUPPRESS_MS) => {
+        clearTimeout(pointerHandledReset);
+        pointerHandledReset = setTimeout(() => {
+          pointerHandled = false;
+          pointerHandledReset = null;
+        }, delay);
+      };
+
+      const markPointerHandled = (delay = TAP_SUPPRESS_MS) => {
+        pointerHandled = true;
+        resetPointerHandledLater(delay);
+      };
+
       const startLongPress = () => {
-        isLongPress = false;
+        longPressTriggered = false;
+        clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
-          isLongPress = true;
+          longPressTriggered = true;
           showFloatingMenu();
         }, 800); // 0.8秒长按
       };
 
-      const cancelLongPress = () => {
+      const finishLongPress = () => {
         clearTimeout(longPressTimer);
-        // 长按完成后不要立即隐藏菜单，让用户可以点击
-        // 重置长按状态需要延迟，避免影响click事件
-        setTimeout(() => {
-          isLongPress = false;
-        }, 50);
+        const wasLongPress = longPressTriggered;
+        longPressTriggered = false;
+        return wasLongPress;
+      };
+
+      const cancelLongPress = () => {
+        finishLongPress();
       };
 
       // iOS Safari文本选择防护
       const preventSelection = (e) => {
-        // 检查是否有target和closest方法
-        if (e.target && typeof e.target.closest === 'function') {
-          if (e.target.closest('.ao3x-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }
-        } else if (e.target) {
-          // 向上遍历DOM树查找匹配的元素（兼容性fallback）
-          let element = e.target;
-          while (element && element !== document) {
-            if (element.classList && element.classList.contains('ao3x-btn')) {
-              e.preventDefault();
-              e.stopPropagation();
-              return false;
+        const target = e.target;
+        if (!target) return;
+        let btn = null;
+        if (typeof target.closest === 'function') {
+          btn = target.closest('.ao3x-btn');
+        } else {
+          let el = target;
+          while (el && el !== document) {
+            if (el.classList && el.classList.contains('ao3x-btn')) {
+              btn = el;
+              break;
             }
-            element = element.parentNode;
+            el = el.parentNode;
           }
         }
+        if (!btn) return;
+        if (e.type === 'touchstart') return; // 允许触摸事件冒泡以保证点击触发
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
       };
 
       // 鼠标事件（桌面）
       btnTranslate.addEventListener('mousedown', (e) => {
+        if (e.button && e.button !== 0) return;
         preventSelection(e);
         startLongPress();
       });
-      btnTranslate.addEventListener('mouseup', cancelLongPress);
+      btnTranslate.addEventListener('mouseup', (e) => {
+        if (e.button && e.button !== 0) return;
+        const wasLongPress = finishLongPress();
+        markPointerHandled(wasLongPress ? LONG_PRESS_SUPPRESS_MS : TAP_SUPPRESS_MS);
+        if (!wasLongPress) {
+          Controller.startTranslate();
+        }
+      });
       btnTranslate.addEventListener('mouseleave', () => {
         cancelLongPress();
         // 鼠标离开时也隐藏菜单
@@ -249,11 +278,20 @@
 
       // 触摸事件（移动设备）
       btnTranslate.addEventListener('touchstart', (e) => {
-        preventSelection(e);
         startLongPress();
+      }, { passive: true });
+      btnTranslate.addEventListener('touchend', (e) => {
+        const wasLongPress = finishLongPress();
+        markPointerHandled(wasLongPress ? LONG_PRESS_SUPPRESS_MS : TAP_SUPPRESS_MS);
+        if (!wasLongPress) {
+          e.preventDefault();
+          Controller.startTranslate();
+        }
+      }, { passive: false });
+      btnTranslate.addEventListener('touchcancel', () => {
+        finishLongPress();
+        markPointerHandled();
       });
-      btnTranslate.addEventListener('touchend', cancelLongPress);
-      btnTranslate.addEventListener('touchcancel', cancelLongPress);
 
       // 悬浮菜单事件
       floatingMenu.addEventListener('mouseleave', () => {
@@ -278,10 +316,9 @@
       document.addEventListener('touchstart', preventSelection);
 
       // 翻译按钮点击事件
-      btnTranslate.addEventListener('click', (e) => {
-        if (!isLongPress) {
-          Controller.startTranslate();
-        }
+      btnTranslate.addEventListener('click', () => {
+        if (pointerHandled) return;
+        Controller.startTranslate();
       });
 
       // 总结按钮事件
@@ -736,7 +773,7 @@
       .ao3x-fab-wrap{position:fixed;right:12px;top:50%;transform:translateY(-50%);z-index:999999;display:flex;flex-direction:column;gap:8px;opacity:0.6;transition:opacity .3s;pointer-events:auto}
       .ao3x-fab-wrap:hover{opacity:1}
       .ao3x-fab-wrap.hidden{opacity:0;pointer-events:none}
-      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px)}
+      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
       .ao3x-btn:hover{background:rgba(255,255,255,.95);box-shadow:0 4px 12px rgba(179,0,0,.15);transform:translateY(-1px)}
       .ao3x-btn:active{transform:scale(.98)}
 
@@ -2127,9 +2164,13 @@
 
   /* ================= Controller ================= */
   const Controller = {
+    _isTranslating: false,
 
-
-
+    hasTranslationBlocks() {
+      const container = document.querySelector('#ao3x-render');
+      if (!container) return false;
+      return !!container.querySelector('.ao3x-block:not(.ao3x-summary-block)');
+    },
 
     // 获取作品名和章节名
     getWorkInfo() {
@@ -2645,97 +2686,114 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       UI.updateToolbarState(); // 更新工具栏状态
     },
     async startTranslate(){
-      const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
-      markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
-
-      // 重置缓存显示状态，因为现在要开始新的翻译
-      View.setShowingCache(false);
-      UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
-
-      const s = settings.get();
-      const allHtml = nodes.map(n=>n.innerHTML);
-      const fullHtml = allHtml.join('\n');
-      const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
-      const reserve = s.planner?.reserve ?? 384;
-      const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
-
-      // 固定prompt token（不含正文）
-      const promptTokens = await estimatePromptTokensFromMessages([
-        { role:'system', content: s.prompt.system || '' },
-        { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
-      ]);
-
-      const allText = stripHtmlToText(fullHtml);
-      const allEstIn = await estimateTokensForText(allText);
-
-      const cw   = s.model.contextWindow || 8192;
-      const maxT = s.gen.maxTokens || 1024;
-      // ★ 核心预算：k<1 时更“能塞”
-      // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
-      // 约束2：prompt + in + out + reserve ≤ cw → in(1+k) ≤ (cw - prompt - reserve)
-      const cap1 = maxT / ratio;
-      const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
-      const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
-      const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
-
-      const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
-      const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
-
-      d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
-
-      // 规划
-      let plan = [];
-      if (canSingle) {
-        const inTok = await estimateTokensForText(allText);
-        plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
-      } else {
-        plan = await packIntoChunks(allHtml, maxInputBudget);
+      if (this._isTranslating) {
+        UI.toast('翻译进行中，请稍候…');
+        return;
       }
-      d('plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
 
-      renderPlanAnchors(plan);
-      View.setMode('trans');
-      RenderState.setTotal(plan.length);
-      Bilingual.setTotal(plan.length);
-      updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+      if (this.hasTranslationBlocks()) {
+        UI.toast('已存在译文，如需重新翻译请先清除缓存或重试失败的段落');
+        return;
+      }
 
-      // 运行
+      this._isTranslating = true;
       try {
-        if (plan.length === 1 && canSingle && (s.planner?.trySingleShotOnce !== false)) {
-          View.info('单次请求翻译中…');
-          await this.translateSingle({
+        const nodes = collectChapterUserstuffSmart();
+        if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+
+        markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
+
+        // 重置缓存显示状态，因为现在要开始新的翻译
+        View.setShowingCache(false);
+        UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
+
+        const s = settings.get();
+        const allHtml = nodes.map(n=>n.innerHTML);
+        const fullHtml = allHtml.join('\n');
+        const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
+        const reserve = s.planner?.reserve ?? 384;
+        const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
+
+        // 固定prompt token（不含正文）
+        const promptTokens = await estimatePromptTokensFromMessages([
+          { role:'system', content: s.prompt.system || '' },
+          { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
+        ]);
+
+        const allText = stripHtmlToText(fullHtml);
+        const allEstIn = await estimateTokensForText(allText);
+
+        const cw   = s.model.contextWindow || 8192;
+        const maxT = s.gen.maxTokens || 1024;
+        // ★ 核心预算：k<1 时更“能塞”
+        // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
+        // 约束2：prompt + in + out + reserve ≤ cw → in(1+k) ≤ (cw - prompt - reserve)
+        const cap1 = maxT / ratio;
+        const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
+        const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
+        const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
+
+        const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
+        const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
+
+        d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
+
+        // 规划
+        let plan = [];
+        if (canSingle) {
+          const inTok = await estimateTokensForText(allText);
+          plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
+        } else {
+          plan = await packIntoChunks(allHtml, maxInputBudget);
+        }
+        d('plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
+
+        renderPlanAnchors(plan);
+        View.setMode('trans');
+        RenderState.setTotal(plan.length);
+        Bilingual.setTotal(plan.length);
+        updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+
+        // 运行
+        try {
+          if (plan.length === 1 && canSingle && (s.planner?.trySingleShotOnce !== false)) {
+            View.info('单次请求翻译中…');
+            await this.translateSingle({
+              endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
+              key: s.api.key,
+              stream: s.stream.enabled,
+              modelCw: s.model.contextWindow,
+              ratio,
+              promptTokens,
+              reserve,
+              contentHtml: plan[0].html,
+              inTok: plan[0].inTok,
+              userMaxTokens: s.gen.maxTokens
+            });
+            View.clearInfo();
+            finalFlushAll(1);
+            return;
+          }
+          View.info('文本较长：已启用智能分段 + 并发流水线…');
+          await this.translateConcurrent({
             endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
             key: s.api.key,
+            plan,
+            concurrency: s.concurrency,
             stream: s.stream.enabled,
             modelCw: s.model.contextWindow,
             ratio,
             promptTokens,
             reserve,
-            contentHtml: plan[0].html,
-            inTok: plan[0].inTok,
             userMaxTokens: s.gen.maxTokens
           });
           View.clearInfo();
-          finalFlushAll(1);
-          return;
+        } catch(e) {
+          d('fatal', e);
+          UI.toast('翻译失败：' + e.message);
         }
-        View.info('文本较长：已启用智能分段 + 并发流水线…');
-        await this.translateConcurrent({
-          endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
-          key: s.api.key,
-          plan,
-          concurrency: s.concurrency,
-          stream: s.stream.enabled,
-          modelCw: s.model.contextWindow,
-          ratio,
-          promptTokens,
-          reserve,
-          userMaxTokens: s.gen.maxTokens
-        });
-        View.clearInfo();
-      } catch(e) {
-        d('fatal', e);
-        UI.toast('翻译失败：' + e.message);
+      } finally {
+        this._isTranslating = false;
       }
     },
 
