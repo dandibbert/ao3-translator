@@ -1327,6 +1327,19 @@
       .ao3x-plan .row b{
         margin-right:8px;
       }
+      .ao3x-plan .row .ao3x-jump-btn{
+        margin-right:8px;
+        padding:2px 6px;
+      }
+
+      .ao3x-block-highlight{
+        animation:ao3x-block-pulse 1.2s ease;
+        box-shadow:0 0 0 3px rgba(179,0,0,0.25);
+      }
+      @keyframes ao3x-block-pulse{
+        0%{box-shadow:0 0 0 3px rgba(179,0,0,0.45);}
+        100%{box-shadow:0 0 0 0 rgba(179,0,0,0);}
+      }
 
       /* 分块指示弹窗 */
       .ao3x-chunk-popup{
@@ -1343,6 +1356,7 @@
         user-select:none;
         -webkit-user-select:none;
         max-width:80vw;
+        pointer-events:none;
       }
       .ao3x-chunk-popup-number{
         color:white;
@@ -1516,7 +1530,7 @@
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
       const estIn = p.inTok != null ? p.inTok : 0;
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
     const controls = `
       <div class="ao3x-block-controls">
@@ -1532,6 +1546,25 @@
     bindBlockControlEvents(box);
   }
   function updateKV(kv){ const k=$('#ao3x-kv'); if(!k) return; k.innerHTML = Object.entries(kv).map(([k,v])=>`<span>${k}: ${escapeHTML(String(v))}</span>`).join(''); }
+
+  function scrollToChunkStart(chunkIndex) {
+    const idx = Number(chunkIndex);
+    if (!Number.isFinite(idx)) return;
+    const container = document.querySelector('#ao3x-render');
+    if (!container) {
+      UI.toast('尚未创建翻译区域');
+      return;
+    }
+    const block = container.querySelector(`.ao3x-block[data-index="${idx}"]:not(.ao3x-summary-block)`);
+    if (!block) {
+      UI.toast(`未找到块 #${idx}`);
+      return;
+    }
+    const anchor = block.querySelector('.ao3x-anchor') || block;
+    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    block.classList.add('ao3x-block-highlight');
+    setTimeout(() => block.classList.remove('ao3x-block-highlight'), 1200);
+  }
 
   /* ================= Token-aware Packing (precise) ================= */
   async function packIntoChunks(htmlList, budgetTokens){
@@ -2389,8 +2422,64 @@
       duration: 1000       // 显示时长 1 秒
     },
     
+    _resolveContainer(hint) {
+      const tryResolveFromNode = (node) => {
+        if (!node) return null;
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          return node.closest('#ao3x-render');
+        }
+        if (node.nodeType === Node.TEXT_NODE && node.parentElement) {
+          return node.parentElement.closest('#ao3x-render');
+        }
+        return null;
+      };
+
+      const resolveFromHint = (maybeHint) => {
+        if (!maybeHint) return null;
+        if (maybeHint instanceof Event) {
+          const path = typeof maybeHint.composedPath === 'function'
+            ? maybeHint.composedPath()
+            : [];
+          for (const node of path) {
+            const found = tryResolveFromNode(node);
+            if (found) return found;
+          }
+          return tryResolveFromNode(maybeHint.target);
+        }
+        if (Array.isArray(maybeHint)) {
+          for (const node of maybeHint) {
+            const found = tryResolveFromNode(node);
+            if (found) return found;
+          }
+          return null;
+        }
+        return tryResolveFromNode(maybeHint);
+      };
+
+      const hinted = resolveFromHint(hint);
+      if (hinted) {
+        if (this._container !== hinted) {
+          this._container = hinted;
+          d('ChunkIndicator: rebound to container via hint', hinted);
+        }
+        return hinted;
+      }
+
+      if (this._container && this._container.isConnected) {
+        return this._container;
+      }
+
+      const containers = document.querySelectorAll('#ao3x-render');
+      const container = containers.length ? containers[containers.length - 1] : null;
+      if (container && this._container !== container) {
+        this._container = container;
+        d('ChunkIndicator: rebound to container', container);
+      }
+      return container;
+    },
+
     init() {
-      const container = document.querySelector('#ao3x-render');
+      const container = this._resolveContainer();
       if (!container) {
         // 限制重试次数，避免无限重试
         if (this._retryCount < this._maxRetries) {
@@ -2405,53 +2494,58 @@
       
       // 重置重试计数器
       this._retryCount = 0;
-      
-      // 如果已经在这个容器上添加了监听器，直接返回
-      if (this._container === container && this._hasListener) {
-        d('ChunkIndicator: already initialized on this container, skipping');
-        return;
-      }
-      
-      // 如果容器改变了，先移除旧的监听器
-      if (this._container && this._boundHandler && this._hasListener) {
-        if (document.contains(this._container)) {
-          this._container.removeEventListener('dblclick', this._boundHandler);
-          d('ChunkIndicator: removed old listener from previous container');
-        } else {
-          d('ChunkIndicator: old container no longer in DOM');
-        }
-        this._hasListener = false;
-      }
-      
-      // 保存新容器引用
+      const previousContainer = this._container;
       this._container = container;
-      
-      // 创建绑定的处理函数
+
       if (!this._boundHandler) {
         this._boundHandler = this.handleDoubleClick.bind(this);
       }
-      
-      // 在容器上监听双击事件（事件委托）
-      container.addEventListener('dblclick', this._boundHandler);
-      this._hasListener = true;
-      d('ChunkIndicator: initialized and listening on', container);
+
+      // 总是在 document 上监听，避免容器被替换后丢失事件
+      if (!this._hasListener) {
+        document.addEventListener('dblclick', this._boundHandler);
+        this._hasListener = true;
+        d('ChunkIndicator: initialized and listening on', container);
+      } else {
+        if (previousContainer !== container) {
+          d('ChunkIndicator: switched to new container', container);
+        } else {
+          d('ChunkIndicator: listener already active on current container');
+        }
+      }
     },
-    
+
     handleDoubleClick(e) {
-      d('ChunkIndicator: double click detected', e.target);
-      
-      // 阻止默认的文本选择行为
-      e.preventDefault();
-      
-      // 查找最近的 .ao3x-block 元素
-      const block = e.target.closest('.ao3x-block');
-      d('ChunkIndicator: found block', block);
-      
-      if (!block) {
-        d('ChunkIndicator: no block found');
+      let container = this._resolveContainer(e);
+      if (!container || !container.isConnected) {
+        d('ChunkIndicator: container missing when handling double click');
         return;
       }
-      
+
+      const block = this._locateBlockFromEvent(e, container);
+      if (block && container && !container.contains(block)) {
+        const owningContainer = this._resolveContainer(block);
+        if (owningContainer && owningContainer.contains(block)) {
+          container = owningContainer;
+          d('ChunkIndicator: switched to block container', container);
+        }
+      }
+      if (!block || !container.contains(block)) {
+        const inside = this._isEventInsideContainer(e, container);
+        if (inside) {
+          d('ChunkIndicator: click inside render container but no block found', e.target);
+        } else {
+          d('ChunkIndicator: double click outside render container');
+        }
+        return; // 仅处理渲染容器内的双击
+      }
+
+      d('ChunkIndicator: double click detected', e.target);
+
+      // 阻止默认的文本选择行为
+      e.preventDefault();
+      d('ChunkIndicator: found block', block);
+
       // 读取分块编号
       const chunkIndex = block.getAttribute('data-index');
       d('ChunkIndicator: chunk index', chunkIndex);
@@ -2469,6 +2563,92 @@
       // 显示弹窗
       d('ChunkIndicator: showing popup for chunk', chunkIndex);
       this.showPopup(chunkIndex, previewText);
+    },
+
+    _locateBlockFromEvent(e, container) {
+      if (!e) return null;
+      const tryTarget = (node) => this._getBlockFromTarget(node);
+      let block = tryTarget(e.target);
+      if (block) return block;
+
+      if (typeof e.composedPath === 'function') {
+        block = this._getBlockFromPath(e.composedPath());
+        if (block) return block;
+      }
+
+      block = this._getBlockFromPoint(e);
+      if (block && (!container || container.contains(block))) {
+        return block;
+      }
+
+      if (container) {
+        block = this._getBlockFromBounds(container, e);
+      }
+
+      return block || null;
+    },
+
+    _getBlockFromTarget(target) {
+      let node = target;
+      while (node && node !== document) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.classList?.contains('ao3x-block') && !node.classList.contains('ao3x-summary-block')) {
+          return node;
+        }
+        node = node.parentNode || node.host || null;
+      }
+      return null;
+    },
+
+    _getBlockFromPath(path = []) {
+      for (const node of path) {
+        const block = this._getBlockFromTarget(node);
+        if (block) return block;
+      }
+      return null;
+    },
+
+    _getBlockFromPoint(e) {
+      if (!e) return null;
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
+
+      if (typeof document.elementsFromPoint === 'function') {
+        const hits = document.elementsFromPoint(clientX, clientY) || [];
+        for (const node of hits) {
+          const block = this._getBlockFromTarget(node);
+          if (block) return block;
+        }
+      }
+
+      if (typeof document.elementFromPoint === 'function') {
+        const hit = document.elementFromPoint(clientX, clientY);
+        return this._getBlockFromTarget(hit);
+      }
+      return null;
+    },
+
+    _getBlockFromBounds(container, e) {
+      if (!container || !e) return null;
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
+      const blocks = container.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+      for (const block of blocks) {
+        const rect = block.getBoundingClientRect();
+        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+          return block;
+        }
+      }
+      return null;
+    },
+
+    _isEventInsideContainer(e, container) {
+      if (!e || !container) return false;
+      if (container.contains(e.target)) return true;
+      if (typeof container.getBoundingClientRect !== 'function') return false;
+      const rect = container.getBoundingClientRect();
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return false;
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     },
     
     showPopup(chunkIndex, previewText) {
@@ -2546,7 +2726,7 @@
     const rows = plan.map((p,i)=>{
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
     const controls = `
       <div class="ao3x-block-controls">
@@ -2570,6 +2750,10 @@
       wrapper.appendChild(div);
       c.appendChild(wrapper);
     });
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
+    }
   }
   function appendPlanAnchorsFrom(plan, startIndex){
     const c = ensureRenderContainer();
@@ -2580,7 +2764,7 @@
       const idx = startIndex + i;
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${idx}" title="跳转到块 #${idx}">📍</button><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
     const kv = `<div class="ao3x-kv" id="ao3x-kv"></div>`;
     const headHtml = `<h4>切块计划：共 ${plan.length} 块</h4>`;
@@ -2607,6 +2791,10 @@
       const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
       c.appendChild(wrapper);
+    }
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
     }
   }
 
@@ -2672,6 +2860,18 @@
 
         Controller.retrySelectedBlocks(selectedIndices);
       });
+    }
+
+    if (!container.dataset.jumpBound) {
+      container.addEventListener('click', (event) => {
+        const jumpBtn = event.target.closest('.ao3x-jump-btn');
+        if (!jumpBtn || !container.contains(jumpBtn)) return;
+        event.preventDefault();
+        const index = Number(jumpBtn.getAttribute('data-block-index'));
+        if (!Number.isFinite(index)) return;
+        scrollToChunkStart(index);
+      });
+      container.dataset.jumpBound = '1';
     }
   }
 
