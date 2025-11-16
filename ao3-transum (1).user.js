@@ -2232,7 +2232,20 @@
       }
       this.mode=m; this.applyHostVisibility(); this.refresh(true);
     },
-    applyHostVisibility(){ const container = this.ensure(); if(this.mode==='trans' || this.mode==='bi'){ SelectedNodes.forEach(n=> n.style.display='none'); container.style.display=''; } else { SelectedNodes.forEach(n=> n.style.display=''); container.style.display='none'; } },
+    applyHostVisibility(){ 
+      const container = this.ensure(); 
+      if(this.mode==='trans' || this.mode==='bi'){ 
+        SelectedNodes.forEach(n=> n.style.display='none'); 
+        container.style.display=''; 
+      } else if(this.mode==='orig') {
+        // 原文模式：隐藏原始节点，但保持容器可见（用于双击检测）
+        SelectedNodes.forEach(n=> n.style.display='none'); 
+        container.style.display=''; 
+      } else { 
+        SelectedNodes.forEach(n=> n.style.display=''); 
+        container.style.display='none'; 
+      } 
+    },
     refresh(initial=false){
       if(this.mode==='bi' && Bilingual.canRender()){ this.renderBilingual(); return; }
       if(this.mode==='summary'){ this.renderSummary(); return; }
@@ -2366,22 +2379,41 @@
   const ChunkIndicator = {
     _popup: null,
     _hideTimer: null,
+    _initialized: false,
+    _boundHandler: null,
     settings: {
       showPreview: false,  // 默认不显示预览文本
       duration: 1000       // 显示时长 1 秒
     },
     
     init() {
+      // 避免重复初始化
+      if (this._initialized) return;
+      
       const initWhenReady = () => {
         const container = document.querySelector('#ao3x-render');
         if (!container) {
           setTimeout(initWhenReady, 500);
           return;
         }
+        
+        // 保存绑定的处理函数，避免重复添加
+        if (!this._boundHandler) {
+          this._boundHandler = this.handleDoubleClick.bind(this);
+        }
+        
         // 在容器上监听双击事件（事件委托）
-        container.addEventListener('dblclick', this.handleDoubleClick.bind(this));
+        container.addEventListener('dblclick', this._boundHandler);
+        this._initialized = true;
+        d('ChunkIndicator initialized');
       };
       initWhenReady();
+    },
+    
+    // 重新初始化（用于翻译开始时）
+    reinit() {
+      this._initialized = false;
+      this.init();
     },
     
     handleDoubleClick(e) {
@@ -3259,6 +3291,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         RenderState.setTotal(plan.length);
         Bilingual.setTotal(plan.length);
         updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+        
+        // 重新初始化分块指示器（确保监听器已添加）
+        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.reinit) {
+          ChunkIndicator.reinit();
+        }
 
         // 运行
         try {
@@ -4213,6 +4250,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       View.setMode('trans');
       RenderState.setTotal(plan.length);
       Bilingual.setTotal(plan.length);
+
+      // 重新初始化分块指示器（确保监听器已添加）
+      if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.reinit) {
+        ChunkIndicator.reinit();
+      }
 
       // 显示工具栏
       UI.showToolbar();
