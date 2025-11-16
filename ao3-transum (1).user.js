@@ -1305,12 +1305,37 @@
     `);
   }
   function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
+  function normalizeReasoningEffortValue(val) {
+    if (val == null) return null;
+    if (typeof val === 'number') {
+      return val === -1 ? null : val;
+    }
+    const str = String(val).trim();
+    if (!str || str === '-1') return null;
+    return str;
+  }
+  function applyReasoningEffort(payload, effortValue) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const effort = normalizeReasoningEffortValue(effortValue);
+    if (effort == null) return payload;
+    payload.reasoning = { effort };
+    return payload;
+  }
   function collectPanelValues(panel) {
     const cur = settings.get();
 
     // 收集翻译模型配置
     const translateModel = $('#ao3x-translate-model', panel).value.trim();
     const summaryModel = $('#ao3x-summary-model', panel).value.trim();
+    const readReasoningSelect = (id) => {
+      const el = $(id, panel);
+      if (!el) return -1;
+      const raw = `${el.value ?? ''}`.trim();
+      if (!raw || raw === '-1') return -1;
+      return raw;
+    };
+    const translateReasoning = readReasoningSelect('#ao3x-translate-reasoning');
+    const summaryReasoning = readReasoningSelect('#ao3x-summary-reasoning');
 
     return {
       api: { baseUrl: $('#ao3x-base', panel).value.trim(), path: $('#ao3x-path', panel).value.trim(), key: $('#ao3x-key', panel).value.trim() },
@@ -1332,7 +1357,7 @@
           maxTokens: parseInt($('#ao3x-translate-maxt', panel).value, 10) || cur.gen?.maxTokens || 7000,
           temperature: parseFloat($('#ao3x-translate-temp', panel).value) || cur.gen?.temperature || 0.7
         },
-        reasoningEffort: parseInt($('#ao3x-translate-reasoning', panel).value, 10) || -1
+        reasoningEffort: translateReasoning
       },
       summary: {
         model: {
@@ -1343,7 +1368,7 @@
           maxTokens: parseInt($('#ao3x-summary-maxt', panel).value, 10) || cur.gen?.maxTokens || 7000,
           temperature: parseFloat($('#ao3x-summary-temp', panel).value) || cur.gen?.temperature || 0.7
         },
-        reasoningEffort: parseInt($('#ao3x-summary-reasoning', panel).value, 10) || -1,
+        reasoningEffort: summaryReasoning,
         system: $('#ao3x-summary-sys', panel).value,
         userTemplate: $('#ao3x-summary-user', panel).value,
         ratioTextToSummary: Math.max(0.1, Math.min(1, parseFloat($('#ao3x-summary-ratio', panel).value) || cur.summary?.ratioTextToSummary || 0.3))
@@ -2680,19 +2705,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         inFlight++;
         updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
 
+        const payload = {
+          model: s.model.id,
+          messages: [
+            { role:'system', content: s.prompt.system },
+            { role:'user',   content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
+          ],
+          temperature: s.gen.temperature,
+          max_tokens: s.gen.maxTokens,
+          stream: !!s.stream.enabled
+        };
+        applyReasoningEffort(payload, s.translate?.reasoningEffort);
+
         postChatWithRetry({
           endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
           key: s.api.key,
-          payload: {
-            model: s.model.id,
-            messages: [
-              { role:'system', content: s.prompt.system },
-              { role:'user',   content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
-            ],
-            temperature: s.gen.temperature,
-            max_tokens: s.gen.maxTokens,
-            stream: !!s.stream.enabled
-          },
+          payload,
           stream: s.stream.enabled,
           label,
           onAttempt: (attempt) => {
@@ -2851,19 +2879,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
         const label = `retry#${idx}`;
         inFlight++; updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
+        const payload = {
+          model: settings.get().model.id,
+          messages: [
+            { role:'system', content: settings.get().prompt.system },
+            { role:'user',   content: settings.get().prompt.userTemplate.replace('{{content}}', subPlan.find(p=>p.index===idx).html) }
+          ],
+          temperature: settings.get().gen.temperature,
+          max_tokens: settings.get().gen.maxTokens,
+          stream: !!settings.get().stream.enabled
+        };
+        applyReasoningEffort(payload, s.translate?.reasoningEffort);
+
         postChatWithRetry({
           endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
           key: s.api.key,
-          payload: {
-            model: settings.get().model.id,
-            messages: [
-              { role:'system', content: settings.get().prompt.system },
-              { role:'user',   content: settings.get().prompt.userTemplate.replace('{{content}}', subPlan.find(p=>p.index===idx).html) }
-            ],
-            temperature: settings.get().gen.temperature,
-            max_tokens: settings.get().gen.maxTokens,
-            stream: !!settings.get().stream.enabled
-          },
+          payload,
           stream: s.stream.enabled,
           label,
           onAttempt: (attempt) => {
@@ -3059,19 +3090,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       d('single:tokens', { inTok, predictedOut, outCapByCw, userMaxTokens, maxTokensLocal });
       if (maxTokensLocal < 256) throw new Error('上下文空间不足');
 
+      const s = settings.get();
       const i = 0;
+      const payload = {
+        model: s.model.id,
+        messages: [
+          { role:'system', content: s.prompt.system },
+          { role:'user',   content: s.prompt.userTemplate.replace('{{content}}', contentHtml) }
+        ],
+        temperature: s.gen.temperature,
+        max_tokens: maxTokensLocal,
+        stream: !!s.stream.enabled
+      };
+      applyReasoningEffort(payload, s.translate?.reasoningEffort);
       await postChatWithRetry({
         endpoint, key, stream,
-        payload: {
-          model: settings.get().model.id,
-          messages: [
-            { role:'system', content: settings.get().prompt.system },
-            { role:'user',   content: settings.get().prompt.userTemplate.replace('{{content}}', contentHtml) }
-          ],
-          temperature: settings.get().gen.temperature,
-          max_tokens: maxTokensLocal,
-          stream: !!settings.get().stream.enabled
-        },
+        payload,
         label:`single#${i}`,
         onAttempt: (attempt) => {
           if (attempt === 1) return;
@@ -3140,17 +3174,21 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const begin = performance.now();
         d('chunk:start', {i, inFlight, nextToStart, nextToRender: RenderState.nextToRender, inputTok, predictedOut, outCapByCw, maxTokensLocal, liveRatio});
 
+        const snapshot = settings.get();
+        const payload = {
+          model: snapshot.model.id,
+          messages: [
+            { role:'system', content: snapshot.prompt.system },
+            { role:'user',   content: snapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
+          ],
+          temperature: snapshot.gen.temperature,
+          max_tokens: maxTokensLocal,
+          stream: !!snapshot.stream.enabled
+        };
+        applyReasoningEffort(payload, snapshot.translate?.reasoningEffort);
+
         postChatWithRetry({
-          endpoint, key, payload: {
-            model: settings.get().model.id,
-            messages: [
-              { role:'system', content: settings.get().prompt.system },
-              { role:'user',   content: settings.get().prompt.userTemplate.replace('{{content}}', plan[i].html) }
-            ],
-            temperature: settings.get().gen.temperature,
-            max_tokens: maxTokensLocal,
-            stream: !!settings.get().stream.enabled
-          }, stream, label,
+          endpoint, key, payload, stream, label,
           onAttempt: (attempt) => {
             if (attempt === 1) return;
             if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
@@ -3172,18 +3210,21 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                 const newMax = maxTokensLocal + extra;
                 d('length:increase-max_tokens', {i, from:maxTokensLocal, to:newMax});
                 TransStore.set(String(i), ''); // 清空已输出以免重复
+                const retrySnapshot = settings.get();
+                const retryPayload = {
+                  model: retrySnapshot.model.id,
+                  messages: [
+                    { role:'system', content: retrySnapshot.prompt.system },
+                    { role:'user',   content: retrySnapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
+                  ],
+                  temperature: retrySnapshot.gen.temperature,
+                  max_tokens: newMax,
+                  stream: !!retrySnapshot.stream.enabled
+                };
+                applyReasoningEffort(retryPayload, retrySnapshot.translate?.reasoningEffort);
                 await postChatWithRetry({
                   endpoint, key, stream, label: `chunk#${i}-retry-max`,
-                  payload: {
-                    model: settings.get().model.id,
-                    messages: [
-                      { role:'system', content: settings.get().prompt.system },
-                      { role:'user',   content: settings.get().prompt.userTemplate.replace('{{content}}', plan[i].html) }
-                    ],
-                    temperature: settings.get().gen.temperature,
-                    max_tokens: newMax,
-                    stream: !!settings.get().stream.enabled
-                  },
+                  payload: retryPayload,
                   onAttempt: (attempt2) => {
                     if (attempt2 === 1) return;
                     if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
@@ -3600,23 +3641,27 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       d('summary:single:tokens', { inTok, predictedOut, outCapByCw, userMaxTokens, maxTokensLocal });
       if (maxTokensLocal < 256) throw new Error('上下文空间不足，无法进行总结');
 
+      const s = settings.get();
       const i = 0;
       this.updateSummaryKV({ 状态: '正在总结', 进度: '1/1' });
+
+      const payload = {
+        model: s.summary?.model?.id || s.model.id,
+        messages: [
+          { role: 'system', content: config.system },
+          { role: 'user', content: config.userTemplate.replace('{{content}}', contentHtml) }
+        ],
+        temperature: s.summary?.gen?.temperature || s.gen.temperature,
+        max_tokens: maxTokensLocal,
+        stream: !!s.stream.enabled
+      };
+      applyReasoningEffort(payload, s.summary?.reasoningEffort);
 
       await postChatWithRetry({
         endpoint,
         key,
         stream,
-        payload: {
-          model: settings.get().summary?.model?.id || settings.get().model.id,
-          messages: [
-            { role: 'system', content: config.system },
-            { role: 'user', content: config.userTemplate.replace('{{content}}', contentHtml) }
-          ],
-          temperature: settings.get().summary?.gen?.temperature || settings.get().gen.temperature,
-          max_tokens: maxTokensLocal,
-          stream: !!settings.get().stream.enabled
-        },
+        payload,
         label: `summary-single#${i}`,
         onAttempt: (attempt) => {
           if (attempt === 1) return;
@@ -3699,19 +3744,23 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
         d('summary:chunk:start', { i, inFlight, nextToStart, inputTok, predictedOut, outCapByCw, maxTokensLocal });
 
+        const snapshot = settings.get();
+        const payload = {
+          model: snapshot.summary?.model?.id || snapshot.model.id,
+          messages: [
+            { role: 'system', content: config.system },
+            { role: 'user', content: config.userTemplate.replace('{{content}}', plan[i].html) }
+          ],
+          temperature: snapshot.summary?.gen?.temperature || snapshot.gen.temperature,
+          max_tokens: maxTokensLocal,
+          stream: !!snapshot.stream.enabled
+        };
+        applyReasoningEffort(payload, snapshot.summary?.reasoningEffort);
+
         postChatWithRetry({
           endpoint,
           key,
-          payload: {
-            model: settings.get().summary?.model?.id || settings.get().model.id,
-            messages: [
-              { role: 'system', content: config.system },
-              { role: 'user', content: config.userTemplate.replace('{{content}}', plan[i].html) }
-            ],
-            temperature: settings.get().summary?.gen?.temperature || settings.get().gen.temperature,
-            max_tokens: maxTokensLocal,
-            stream: !!settings.get().stream.enabled
-          },
+          payload,
           stream,
           label,
           onAttempt: (attempt) => {
