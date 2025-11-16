@@ -54,7 +54,8 @@
         ratioOutPerIn: 1        // ★ 英->中常见：输出token约为输入的70%
       },
       watchdog: { idleMs: -1, hardMs: -1, maxRetry: 1 },
-      download: { workerUrl: '' }
+      download: { workerUrl: '' },
+      chunkIndicator: { showPreview: false }  // 分块指示器设置
     },
     get() {
       try {
@@ -543,6 +544,11 @@
                 <span class="ao3x-switch-slider"></span>
                 <span class="ao3x-switch-label">调试模式</span>
               </label>
+              <label class="ao3x-switch">
+                <input id="ao3x-chunk-preview" type="checkbox"/>
+                <span class="ao3x-switch-slider"></span>
+                <span class="ao3x-switch-label">显示分块预览</span>
+              </label>
             </div>
             <div class="ao3x-field">
               <label>存储管理</label>
@@ -604,8 +610,14 @@
           $('#ao3x-summary-model', panel).value = translateModel;
         }
 
-        settings.set(collectPanelValues(panel));
+        const newSettings = settings.set(collectPanelValues(panel));
         applyFontSize();
+        
+        // 同步到 ChunkIndicator
+        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.settings) {
+          ChunkIndicator.settings.showPreview = !!(newSettings.chunkIndicator?.showPreview);
+        }
+        
         saveToast();
       };
 
@@ -686,6 +698,8 @@
       $('#ao3x-summary-sys').value = s.summary?.system || '';
       $('#ao3x-summary-user').value = s.summary?.userTemplate || '';
       $('#ao3x-summary-ratio').value = String(s.summary?.ratioTextToSummary ?? 0.3);
+      // 同步分块指示器设置
+      $('#ao3x-chunk-preview').checked = !!(s.chunkIndicator?.showPreview);
     },
     buildToolbar() {
       const bar = document.createElement('div');
@@ -1314,6 +1328,79 @@
         margin-right:8px;
       }
 
+      /* 分块指示弹窗 */
+      .ao3x-chunk-popup{
+        position:fixed;
+        top:50%;
+        left:50%;
+        transform:translate(-50%, -50%);
+        z-index:999999;
+        background:rgba(239, 68, 68, 0.9);
+        border-radius:16px;
+        padding:24px 32px;
+        box-shadow:0 8px 32px rgba(0, 0, 0, 0.3);
+        animation:popupFadeIn 0.2s ease-out;
+        user-select:none;
+        -webkit-user-select:none;
+        max-width:80vw;
+      }
+      .ao3x-chunk-popup-number{
+        color:white;
+        font-size:48px;
+        font-weight:700;
+        line-height:1;
+        text-align:center;
+        margin:0;
+        font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      .ao3x-chunk-popup-preview{
+        color:rgba(255, 255, 255, 0.9);
+        font-size:13px;
+        line-height:1.5;
+        text-align:left;
+        margin:12px 0 0 0;
+      }
+      .ao3x-chunk-popup-preview div{
+        margin:4px 0;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+      @keyframes popupFadeIn{
+        from{
+          opacity:0;
+          transform:translate(-50%, -50%) scale(0.9);
+        }
+        to{
+          opacity:1;
+          transform:translate(-50%, -50%) scale(1);
+        }
+      }
+      .ao3x-chunk-popup.hiding{
+        animation:popupFadeOut 0.2s ease-out forwards;
+      }
+      @keyframes popupFadeOut{
+        from{
+          opacity:1;
+          transform:translate(-50%, -50%) scale(1);
+        }
+        to{
+          opacity:0;
+          transform:translate(-50%, -50%) scale(0.9);
+        }
+      }
+      @media (max-width:768px){
+        .ao3x-chunk-popup{
+          padding:20px 24px;
+          max-width:90vw;
+        }
+        .ao3x-chunk-popup-number{
+          font-size:36px;
+        }
+        .ao3x-chunk-popup-preview{
+          font-size:12px;
+        }
+      }
 
     `);
   }
@@ -1404,6 +1491,9 @@
       },
       download: {
         workerUrl: ($('#ao3x-download-worker', panel).value || cur.download?.workerUrl || '').trim()
+      },
+      chunkIndicator: {
+        showPreview: $('#ao3x-chunk-preview', panel).checked
       }
     };
   }
@@ -2270,6 +2360,118 @@
       return out;
     },
     pairByParagraph(origHTML, transHTML){ const o=this.splitParagraphs(origHTML); const t=this.splitParagraphs(transHTML); const m=Math.max(o.length,t.length); const pairs=new Array(m); for(let i=0;i<m;i++){ pairs[i]={orig:o[i]||'',trans:t[i]||''}; } return pairs; }
+  };
+
+  /* ================= Chunk Indicator ================= */
+  const ChunkIndicator = {
+    _popup: null,
+    _hideTimer: null,
+    settings: {
+      showPreview: false,  // 默认不显示预览文本
+      duration: 1000       // 显示时长 1 秒
+    },
+    
+    init() {
+      const initWhenReady = () => {
+        const container = document.querySelector('#ao3x-render');
+        if (!container) {
+          setTimeout(initWhenReady, 500);
+          return;
+        }
+        // 在容器上监听双击事件（事件委托）
+        container.addEventListener('dblclick', this.handleDoubleClick.bind(this));
+      };
+      initWhenReady();
+    },
+    
+    handleDoubleClick(e) {
+      // 阻止默认的文本选择行为
+      e.preventDefault();
+      
+      // 查找最近的 .ao3x-block 元素
+      const block = e.target.closest('.ao3x-block');
+      if (!block) return;
+      
+      // 读取分块编号
+      const chunkIndex = block.getAttribute('data-index');
+      if (chunkIndex === null) return;
+      
+      // 仅在设置开启时获取预览文本
+      const previewText = this.settings.showPreview 
+        ? this.getPreviewText(parseInt(chunkIndex, 10)) 
+        : null;
+      
+      // 显示弹窗
+      this.showPopup(chunkIndex, previewText);
+    },
+    
+    showPopup(chunkIndex, previewText) {
+      // 清除之前的定时器
+      if (this._hideTimer) {
+        clearTimeout(this._hideTimer);
+      }
+      
+      // 创建弹窗（如果不存在）
+      if (!this._popup) {
+        this._popup = document.createElement('div');
+        this._popup.className = 'ao3x-chunk-popup';
+        document.body.appendChild(this._popup);
+      }
+      
+      // 构建弹窗内容
+      let content = `<div class="ao3x-chunk-popup-number">#${chunkIndex}</div>`;
+      
+      // 仅在开启预览时显示
+      if (previewText && this.settings.showPreview) {
+        content += `
+          <div class="ao3x-chunk-popup-preview">
+            <div>开头：${escapeHTML(previewText.startText)}...</div>
+            <div>结尾：...${escapeHTML(previewText.endText)}</div>
+          </div>
+        `;
+      }
+      
+      // 更新内容
+      this._popup.innerHTML = content;
+      this._popup.classList.remove('hiding');
+      
+      // 1 秒后自动隐藏
+      this._hideTimer = setTimeout(() => this.hidePopup(), this.settings.duration);
+    },
+    
+    hidePopup() {
+      if (!this._popup) return;
+      
+      // 添加淡出动画类
+      this._popup.classList.add('hiding');
+      
+      // 等待动画完成后移除
+      setTimeout(() => {
+        if (this._popup && this._popup.parentNode) {
+          this._popup.remove();
+          this._popup = null;
+        }
+      }, 200);
+    },
+    
+    getPreviewText(chunkIndex) {
+      // 从 PlanStore 获取分块的原始 HTML
+      const html = (typeof PlanStore !== 'undefined' && PlanStore.get) 
+        ? PlanStore.get(chunkIndex) 
+        : '';
+      
+      if (!html) return null;
+      
+      // 转换为纯文本
+      const text = stripHtmlToText(html);
+      const cleanText = text.replace(/\s+/g, ' ').trim();
+      
+      // 提取开头和结尾
+      const startText = cleanText.slice(0, 50);
+      const endText = cleanText.slice(-50);
+      
+      return { startText, endText };
+    }
   };
 
   function renderPlanAnchors(plan){
@@ -4038,6 +4240,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
   function init(){
     UI.init();
     applyFontSize(); // 应用初始字体大小设置
+
+    // 初始化分块指示器
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
+    }
 
     // 初始化翻译缓存
     TransStore.initCache();
