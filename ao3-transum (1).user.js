@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      0.9.0
+// @version      0.9.1
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -3306,13 +3306,6 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         RenderState.setTotal(plan.length);
         Bilingual.setTotal(plan.length);
         updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
-        
-        // 延迟初始化分块指示器（确保 DOM 已更新）
-        setTimeout(() => {
-          if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
-            ChunkIndicator.init();
-          }
-        }, 100);
 
         // 运行
         try {
@@ -4194,6 +4187,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }
     }
     if (settings.get().debug) console.log('[AO3X] drain: flushed all blocks into DOM');
+    
+    // 在所有块都刷新到 DOM 后，初始化分块指示器
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
+    }
   }
 
   /* ================= 自动加载缓存 ================= */
@@ -4268,18 +4266,16 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       RenderState.setTotal(plan.length);
       Bilingual.setTotal(plan.length);
 
-      // 延迟初始化分块指示器（确保 DOM 已更新）
-      setTimeout(() => {
-        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
-          ChunkIndicator.init();
-        }
-      }, 100);
-
       // 显示工具栏
       UI.showToolbar();
 
       // 刷新显示以加载缓存内容
       View.refresh(true);
+
+      // 初始化分块指示器（缓存加载完成后）
+      if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+        ChunkIndicator.init();
+      }
 
       // 更新工具栏状态
       UI.updateToolbarState();
