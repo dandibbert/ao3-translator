@@ -1343,6 +1343,7 @@
         user-select:none;
         -webkit-user-select:none;
         max-width:80vw;
+        pointer-events:none;
       }
       .ao3x-chunk-popup-number{
         color:white;
@@ -2445,9 +2446,13 @@
         return;
       }
 
-      const block = this._getBlockFromTarget(e.target);
+      const block = this._locateBlockFromEvent(e, container);
       if (!block || !container.contains(block)) {
-        d('ChunkIndicator: double click outside render container');
+        if (container.contains(e.target)) {
+          d('ChunkIndicator: click inside render container but no block found', e.target);
+        } else {
+          d('ChunkIndicator: double click outside render container');
+        }
         return; // 仅处理渲染容器内的双击
       }
 
@@ -2476,13 +2481,66 @@
       this.showPopup(chunkIndex, previewText);
     },
 
+    _locateBlockFromEvent(e, container) {
+      if (!e) return null;
+      const tryTarget = (node) => this._getBlockFromTarget(node);
+      let block = tryTarget(e.target);
+      if (block) return block;
+
+      if (typeof e.composedPath === 'function') {
+        block = this._getBlockFromPath(e.composedPath());
+        if (block) return block;
+      }
+
+      block = this._getBlockFromPoint(e);
+      if (block && (!container || container.contains(block))) {
+        return block;
+      }
+
+      if (container) {
+        block = this._getBlockFromBounds(container, e);
+      }
+
+      return block || null;
+    },
+
     _getBlockFromTarget(target) {
       let node = target;
       while (node && node !== document) {
-        if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains('ao3x-block') && !node.classList.contains('ao3x-summary-block')) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.classList?.contains('ao3x-block') && !node.classList.contains('ao3x-summary-block')) {
           return node;
         }
-        node = node.parentNode;
+        node = node.parentNode || node.host || null;
+      }
+      return null;
+    },
+
+    _getBlockFromPath(path = []) {
+      for (const node of path) {
+        const block = this._getBlockFromTarget(node);
+        if (block) return block;
+      }
+      return null;
+    },
+
+    _getBlockFromPoint(e) {
+      if (!e || typeof document.elementFromPoint !== 'function') return null;
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
+      const hit = document.elementFromPoint(clientX, clientY);
+      return this._getBlockFromTarget(hit);
+    },
+
+    _getBlockFromBounds(container, e) {
+      if (!container || !e) return null;
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
+      const blocks = container.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+      for (const block of blocks) {
+        const rect = block.getBoundingClientRect();
+        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+          return block;
+        }
       }
       return null;
     },
