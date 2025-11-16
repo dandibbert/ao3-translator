@@ -2448,7 +2448,8 @@
 
       const block = this._locateBlockFromEvent(e, container);
       if (!block || !container.contains(block)) {
-        if (container.contains(e.target)) {
+        const inside = this._isEventInsideContainer(e, container);
+        if (inside) {
           d('ChunkIndicator: click inside render container but no block found', e.target);
         } else {
           d('ChunkIndicator: double click outside render container');
@@ -2524,11 +2525,23 @@
     },
 
     _getBlockFromPoint(e) {
-      if (!e || typeof document.elementFromPoint !== 'function') return null;
+      if (!e) return null;
       const { clientX, clientY } = e;
       if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
-      const hit = document.elementFromPoint(clientX, clientY);
-      return this._getBlockFromTarget(hit);
+
+      if (typeof document.elementsFromPoint === 'function') {
+        const hits = document.elementsFromPoint(clientX, clientY) || [];
+        for (const node of hits) {
+          const block = this._getBlockFromTarget(node);
+          if (block) return block;
+        }
+      }
+
+      if (typeof document.elementFromPoint === 'function') {
+        const hit = document.elementFromPoint(clientX, clientY);
+        return this._getBlockFromTarget(hit);
+      }
+      return null;
     },
 
     _getBlockFromBounds(container, e) {
@@ -2543,6 +2556,16 @@
         }
       }
       return null;
+    },
+
+    _isEventInsideContainer(e, container) {
+      if (!e || !container) return false;
+      if (container.contains(e.target)) return true;
+      if (typeof container.getBoundingClientRect !== 'function') return false;
+      const rect = container.getBoundingClientRect();
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return false;
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     },
     
     showPopup(chunkIndex, previewText) {
