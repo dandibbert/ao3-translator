@@ -2381,6 +2381,7 @@
     _hideTimer: null,
     _container: null,
     _boundHandler: null,
+    _hasListener: false,  // 标记是否已添加监听器
     settings: {
       showPreview: false,  // 默认不显示预览文本
       duration: 1000       // 显示时长 1 秒
@@ -2394,15 +2395,21 @@
         return;
       }
       
-      // 如果容器已经改变或已经初始化过，先移除旧的监听器
-      if (this._container && this._boundHandler) {
-        // 检查容器是否还在 DOM 中
+      // 如果已经在这个容器上添加了监听器，直接返回
+      if (this._container === container && this._hasListener) {
+        d('ChunkIndicator: already initialized on this container, skipping');
+        return;
+      }
+      
+      // 如果容器改变了，先移除旧的监听器
+      if (this._container && this._boundHandler && this._hasListener) {
         if (document.contains(this._container)) {
           this._container.removeEventListener('dblclick', this._boundHandler);
-          d('ChunkIndicator: removed old listener from existing container');
+          d('ChunkIndicator: removed old listener from previous container');
         } else {
           d('ChunkIndicator: old container no longer in DOM');
         }
+        this._hasListener = false;
       }
       
       // 保存新容器引用
@@ -2415,6 +2422,7 @@
       
       // 在容器上监听双击事件（事件委托）
       container.addEventListener('dblclick', this._boundHandler);
+      this._hasListener = true;
       d('ChunkIndicator: initialized and listening on', container);
     },
     
