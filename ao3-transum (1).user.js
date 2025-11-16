@@ -1343,6 +1343,7 @@
         user-select:none;
         -webkit-user-select:none;
         max-width:80vw;
+        pointer-events:none;
       }
       .ao3x-chunk-popup-number{
         color:white;
@@ -2389,8 +2390,20 @@
       duration: 1000       // 显示时长 1 秒
     },
     
-    init() {
+    _resolveContainer() {
+      if (this._container && this._container.isConnected) {
+        return this._container;
+      }
       const container = document.querySelector('#ao3x-render');
+      if (container && this._container !== container) {
+        this._container = container;
+        d('ChunkIndicator: rebound to container', container);
+      }
+      return container;
+    },
+
+    init() {
+      const container = this._resolveContainer();
       if (!container) {
         // 限制重试次数，避免无限重试
         if (this._retryCount < this._maxRetries) {
@@ -2405,53 +2418,51 @@
       
       // 重置重试计数器
       this._retryCount = 0;
-      
-      // 如果已经在这个容器上添加了监听器，直接返回
-      if (this._container === container && this._hasListener) {
-        d('ChunkIndicator: already initialized on this container, skipping');
-        return;
-      }
-      
-      // 如果容器改变了，先移除旧的监听器
-      if (this._container && this._boundHandler && this._hasListener) {
-        if (document.contains(this._container)) {
-          this._container.removeEventListener('dblclick', this._boundHandler);
-          d('ChunkIndicator: removed old listener from previous container');
-        } else {
-          d('ChunkIndicator: old container no longer in DOM');
-        }
-        this._hasListener = false;
-      }
-      
-      // 保存新容器引用
+      const previousContainer = this._container;
       this._container = container;
-      
-      // 创建绑定的处理函数
+
       if (!this._boundHandler) {
         this._boundHandler = this.handleDoubleClick.bind(this);
       }
-      
-      // 在容器上监听双击事件（事件委托）
-      container.addEventListener('dblclick', this._boundHandler);
-      this._hasListener = true;
-      d('ChunkIndicator: initialized and listening on', container);
+
+      // 总是在 document 上监听，避免容器被替换后丢失事件
+      if (!this._hasListener) {
+        document.addEventListener('dblclick', this._boundHandler);
+        this._hasListener = true;
+        d('ChunkIndicator: initialized and listening on', container);
+      } else {
+        if (previousContainer !== container) {
+          d('ChunkIndicator: switched to new container', container);
+        } else {
+          d('ChunkIndicator: listener already active on current container');
+        }
+      }
     },
-    
+
     handleDoubleClick(e) {
-      d('ChunkIndicator: double click detected', e.target);
-      
-      // 阻止默认的文本选择行为
-      e.preventDefault();
-      
-      // 查找最近的 .ao3x-block 元素
-      const block = e.target.closest('.ao3x-block');
-      d('ChunkIndicator: found block', block);
-      
-      if (!block) {
-        d('ChunkIndicator: no block found');
+      const container = this._resolveContainer();
+      if (!container || !container.isConnected) {
+        d('ChunkIndicator: container missing when handling double click');
         return;
       }
-      
+
+      const block = this._locateBlockFromEvent(e, container);
+      if (!block || !container.contains(block)) {
+        const inside = this._isEventInsideContainer(e, container);
+        if (inside) {
+          d('ChunkIndicator: click inside render container but no block found', e.target);
+        } else {
+          d('ChunkIndicator: double click outside render container');
+        }
+        return; // 仅处理渲染容器内的双击
+      }
+
+      d('ChunkIndicator: double click detected', e.target);
+
+      // 阻止默认的文本选择行为
+      e.preventDefault();
+      d('ChunkIndicator: found block', block);
+
       // 读取分块编号
       const chunkIndex = block.getAttribute('data-index');
       d('ChunkIndicator: chunk index', chunkIndex);
@@ -2469,6 +2480,92 @@
       // 显示弹窗
       d('ChunkIndicator: showing popup for chunk', chunkIndex);
       this.showPopup(chunkIndex, previewText);
+    },
+
+    _locateBlockFromEvent(e, container) {
+      if (!e) return null;
+      const tryTarget = (node) => this._getBlockFromTarget(node);
+      let block = tryTarget(e.target);
+      if (block) return block;
+
+      if (typeof e.composedPath === 'function') {
+        block = this._getBlockFromPath(e.composedPath());
+        if (block) return block;
+      }
+
+      block = this._getBlockFromPoint(e);
+      if (block && (!container || container.contains(block))) {
+        return block;
+      }
+
+      if (container) {
+        block = this._getBlockFromBounds(container, e);
+      }
+
+      return block || null;
+    },
+
+    _getBlockFromTarget(target) {
+      let node = target;
+      while (node && node !== document) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.classList?.contains('ao3x-block') && !node.classList.contains('ao3x-summary-block')) {
+          return node;
+        }
+        node = node.parentNode || node.host || null;
+      }
+      return null;
+    },
+
+    _getBlockFromPath(path = []) {
+      for (const node of path) {
+        const block = this._getBlockFromTarget(node);
+        if (block) return block;
+      }
+      return null;
+    },
+
+    _getBlockFromPoint(e) {
+      if (!e) return null;
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
+
+      if (typeof document.elementsFromPoint === 'function') {
+        const hits = document.elementsFromPoint(clientX, clientY) || [];
+        for (const node of hits) {
+          const block = this._getBlockFromTarget(node);
+          if (block) return block;
+        }
+      }
+
+      if (typeof document.elementFromPoint === 'function') {
+        const hit = document.elementFromPoint(clientX, clientY);
+        return this._getBlockFromTarget(hit);
+      }
+      return null;
+    },
+
+    _getBlockFromBounds(container, e) {
+      if (!container || !e) return null;
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return null;
+      const blocks = container.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+      for (const block of blocks) {
+        const rect = block.getBoundingClientRect();
+        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+          return block;
+        }
+      }
+      return null;
+    },
+
+    _isEventInsideContainer(e, container) {
+      if (!e || !container) return false;
+      if (container.contains(e.target)) return true;
+      if (typeof container.getBoundingClientRect !== 'function') return false;
+      const rect = container.getBoundingClientRect();
+      const { clientX, clientY } = e;
+      if (typeof clientX !== 'number' || typeof clientY !== 'number') return false;
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     },
     
     showPopup(chunkIndex, previewText) {
@@ -2570,6 +2667,10 @@
       wrapper.appendChild(div);
       c.appendChild(wrapper);
     });
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
+    }
   }
   function appendPlanAnchorsFrom(plan, startIndex){
     const c = ensureRenderContainer();
@@ -2607,6 +2708,10 @@
       const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
       c.appendChild(wrapper);
+    }
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
     }
   }
 
