@@ -2382,6 +2382,8 @@
     _container: null,
     _boundHandler: null,
     _hasListener: false,  // 标记是否已添加监听器
+    _retryCount: 0,       // 重试计数器
+    _maxRetries: 5,       // 最大重试次数
     settings: {
       showPreview: false,  // 默认不显示预览文本
       duration: 1000       // 显示时长 1 秒
@@ -2390,10 +2392,19 @@
     init() {
       const container = document.querySelector('#ao3x-render');
       if (!container) {
-        d('ChunkIndicator: container not found, retrying...');
-        setTimeout(() => this.init(), 500);
+        // 限制重试次数，避免无限重试
+        if (this._retryCount < this._maxRetries) {
+          this._retryCount++;
+          d('ChunkIndicator: container not found, retrying... (' + this._retryCount + '/' + this._maxRetries + ')');
+          setTimeout(() => this.init(), 500);
+        } else {
+          d('ChunkIndicator: container not found after ' + this._maxRetries + ' retries, giving up');
+        }
         return;
       }
+      
+      // 重置重试计数器
+      this._retryCount = 0;
       
       // 如果已经在这个容器上添加了监听器，直接返回
       if (this._container === container && this._hasListener) {
@@ -4306,10 +4317,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     UI.init();
     applyFontSize(); // 应用初始字体大小设置
 
-    // 初始化分块指示器
-    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
-      ChunkIndicator.init();
-    }
+    // 不在页面加载时初始化分块指示器，只在翻译完成后初始化
+    // ChunkIndicator.init() 会在 drain() 和 autoLoadFromCache() 中调用
 
     // 初始化翻译缓存
     TransStore.initCache();
