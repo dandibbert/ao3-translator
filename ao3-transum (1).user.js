@@ -2394,13 +2394,18 @@
         return;
       }
       
-      // 如果已经初始化过，先移除旧的监听器
+      // 如果容器已经改变或已经初始化过，先移除旧的监听器
       if (this._container && this._boundHandler) {
-        this._container.removeEventListener('dblclick', this._boundHandler);
-        d('ChunkIndicator: removed old listener');
+        // 检查容器是否还在 DOM 中
+        if (document.contains(this._container)) {
+          this._container.removeEventListener('dblclick', this._boundHandler);
+          d('ChunkIndicator: removed old listener from existing container');
+        } else {
+          d('ChunkIndicator: old container no longer in DOM');
+        }
       }
       
-      // 保存容器引用
+      // 保存新容器引用
       this._container = container;
       
       // 创建绑定的处理函数
@@ -2414,16 +2419,28 @@
     },
     
     handleDoubleClick(e) {
+      d('ChunkIndicator: double click detected', e.target);
+      
       // 阻止默认的文本选择行为
       e.preventDefault();
       
       // 查找最近的 .ao3x-block 元素
       const block = e.target.closest('.ao3x-block');
-      if (!block) return;
+      d('ChunkIndicator: found block', block);
+      
+      if (!block) {
+        d('ChunkIndicator: no block found');
+        return;
+      }
       
       // 读取分块编号
       const chunkIndex = block.getAttribute('data-index');
-      if (chunkIndex === null) return;
+      d('ChunkIndicator: chunk index', chunkIndex);
+      
+      if (chunkIndex === null) {
+        d('ChunkIndicator: no chunk index');
+        return;
+      }
       
       // 仅在设置开启时获取预览文本
       const previewText = this.settings.showPreview 
@@ -2431,6 +2448,7 @@
         : null;
       
       // 显示弹窗
+      d('ChunkIndicator: showing popup for chunk', chunkIndex);
       this.showPopup(chunkIndex, previewText);
     },
     
@@ -3289,10 +3307,12 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         Bilingual.setTotal(plan.length);
         updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
         
-        // 初始化分块指示器（确保监听器已添加）
-        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
-          ChunkIndicator.init();
-        }
+        // 延迟初始化分块指示器（确保 DOM 已更新）
+        setTimeout(() => {
+          if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+            ChunkIndicator.init();
+          }
+        }, 100);
 
         // 运行
         try {
@@ -4248,10 +4268,12 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       RenderState.setTotal(plan.length);
       Bilingual.setTotal(plan.length);
 
-      // 初始化分块指示器（确保监听器已添加）
-      if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
-        ChunkIndicator.init();
-      }
+      // 延迟初始化分块指示器（确保 DOM 已更新）
+      setTimeout(() => {
+        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+          ChunkIndicator.init();
+        }
+      }, 100);
 
       // 显示工具栏
       UI.showToolbar();
