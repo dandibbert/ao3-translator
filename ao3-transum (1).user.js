@@ -1234,8 +1234,8 @@
         border:1px solid var(--c-border);border-radius:4px;
         position:relative;transition:all .2s;
       }
-      .ao3x-block-checkbox:hover .checkmark{
-        background:var(--c-accent);border-color:var(--c-accent);
+      .ao3x-block-checkbox:hover input:not(:checked) ~ .checkmark{
+        border-color:var(--c-accent);
       }
       .ao3x-block-checkbox input:checked ~ .checkmark{
         background:var(--c-accent);border-color:var(--c-accent);
