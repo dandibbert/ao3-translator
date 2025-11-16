@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      0.9.4
+// @version      0.9.5
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2473,16 +2473,15 @@
 
       // 阻止默认的文本选择行为
       e.preventDefault();
-      
+
       // 查找最近的 .ao3x-block 元素
       const block = e.target.closest('.ao3x-block');
-      d('ChunkIndicator: found block', block);
-      
-      if (!block) {
-        d('ChunkIndicator: no block found');
+      if (!block || !container.contains(block)) {
+        d('ChunkIndicator: no block found within container');
         return;
       }
-      
+      d('ChunkIndicator: found block', block);
+
       // 读取分块编号
       const chunkIndex = block.getAttribute('data-index');
       d('ChunkIndicator: chunk index', chunkIndex);
