@@ -139,6 +139,7 @@
       const wrap = document.createElement('div');
       wrap.className = 'ao3x-fab-wrap';
       const btnTranslate = document.createElement('button'); btnTranslate.className = 'ao3x-btn'; btnTranslate.textContent = '🌐';
+      UI._btnTranslate = btnTranslate;
       const btnMain = document.createElement('button'); btnMain.className = 'ao3x-btn'; btnMain.textContent = '⚙️';
 
       // 创建悬浮按钮组容器
@@ -768,6 +769,17 @@
           }
         }
       }
+    },
+    setTranslateBusy(isBusy) {
+      const btn = UI._btnTranslate;
+      if (!btn) return;
+      if (isBusy) {
+        btn.classList.add('ao3x-btn-busy');
+        btn.setAttribute('aria-busy', 'true');
+      } else {
+        btn.classList.remove('ao3x-btn-busy');
+        btn.removeAttribute('aria-busy');
+      }
     }
   };
   const saveToast = (()=>{ let t; return ()=>{ clearTimeout(t); t=setTimeout(()=>UI.toast('已保存'), 120); }; })();
@@ -795,6 +807,7 @@
       .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
       .ao3x-btn:hover{background:rgba(255,255,255,.95);box-shadow:0 4px 12px rgba(179,0,0,.15);transform:translateY(-1px)}
       .ao3x-btn:active{transform:scale(.98)}
+      .ao3x-btn-busy{opacity:.7;cursor:wait}
 
       /* 悬浮按钮组 - 环状布局 */
       .ao3x-floating-menu{
@@ -2952,6 +2965,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       UI.updateToolbarState(); // 更新工具栏状态
     },
     async startTranslate(){
+      if (this._isTranslating) {
+        UI.toast('翻译任务正在进行中，请勿重复触发');
+        return;
+      }
+
       const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
 
       const existingContainer = document.querySelector('#ao3x-render');
@@ -2982,6 +3000,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }
 
       this._isTranslating = true;
+      UI.setTranslateBusy(true);
       try {
         const nodes = collectChapterUserstuffSmart();
         if(!nodes.length){ UI.toast('未找到章节正文'); return; }
@@ -3079,6 +3098,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         }
       } finally {
         this._isTranslating = false;
+        UI.setTranslateBusy(false);
       }
     },
 
