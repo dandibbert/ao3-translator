@@ -3408,19 +3408,19 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const allText = stripHtmlToText(fullHtml);
         const allEstIn = await estimateTokensForText(allText);
 
-        const cw = s.model.contextWindow || 8192;
-        const maxT = s.gen.maxTokens || 1024;
+        const summaryModelCw = s.summary?.model?.contextWindow || s.model.contextWindow || 8192;
+        const summaryMaxTokens = s.summary?.gen?.maxTokens || s.gen.maxTokens || 1024;
 
         // 总结通常比翻译需要更少的输出token
-        const cap1 = maxT / ratio;
-        const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
+        const cap1 = summaryMaxTokens / ratio;
+        const cap2 = (summaryModelCw - promptTokens - reserve) / (1 + ratio);
         const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
         const maxInputBudget = Math.floor(maxInputBudgetRaw * packSlack);
 
         const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
         const canSingle = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
 
-        d('summary:budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
+        d('summary:budget', { contextWindow: summaryModelCw, promptTokens, reserve, userMaxTokens: summaryMaxTokens, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
 
         // 创建总结计划
         let plan = [];
@@ -3445,13 +3445,13 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
             key: s.api.key,
             stream: s.stream.enabled,
-            modelCw: s.model.contextWindow,
+            modelCw: summaryModelCw,
             ratio,
             promptTokens,
             reserve,
             contentHtml: plan[0].html,
             inTok: plan[0].inTok,
-            userMaxTokens: s.gen.maxTokens,
+            userMaxTokens: summaryMaxTokens,
             config
           });
         } else {
@@ -3462,11 +3462,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             plan,
             concurrency: s.concurrency,
             stream: s.stream.enabled,
-            modelCw: s.model.contextWindow,
+            modelCw: summaryModelCw,
             ratio,
             promptTokens,
             reserve,
-            userMaxTokens: s.gen.maxTokens,
+            userMaxTokens: summaryMaxTokens,
             config
           });
         }
