@@ -1156,7 +1156,7 @@
       /* 内容区域 */
       .ao3x-render{margin:0 auto;max-width:900px;padding:0 16px}
       .ao3x-translation{line-height:1.7;min-height:1em}
-      .ao3x-block{margin-bottom:1em}
+      .ao3x-block{margin-bottom:1em;font-size:var(--translation-font-size,16px);line-height:1.7}
       .ao3x-muted{opacity:.5;font-style:italic}
       .ao3x-small{font-size:12px;color:var(--c-muted)}
 
@@ -2379,7 +2379,7 @@
   const ChunkIndicator = {
     _popup: null,
     _hideTimer: null,
-    _initialized: false,
+    _container: null,
     _boundHandler: null,
     settings: {
       showPreview: false,  // 默认不显示预览文本
@@ -2387,33 +2387,30 @@
     },
     
     init() {
-      // 避免重复初始化
-      if (this._initialized) return;
+      const container = document.querySelector('#ao3x-render');
+      if (!container) {
+        d('ChunkIndicator: container not found, retrying...');
+        setTimeout(() => this.init(), 500);
+        return;
+      }
       
-      const initWhenReady = () => {
-        const container = document.querySelector('#ao3x-render');
-        if (!container) {
-          setTimeout(initWhenReady, 500);
-          return;
-        }
-        
-        // 保存绑定的处理函数，避免重复添加
-        if (!this._boundHandler) {
-          this._boundHandler = this.handleDoubleClick.bind(this);
-        }
-        
-        // 在容器上监听双击事件（事件委托）
-        container.addEventListener('dblclick', this._boundHandler);
-        this._initialized = true;
-        d('ChunkIndicator initialized');
-      };
-      initWhenReady();
-    },
-    
-    // 重新初始化（用于翻译开始时）
-    reinit() {
-      this._initialized = false;
-      this.init();
+      // 如果已经初始化过，先移除旧的监听器
+      if (this._container && this._boundHandler) {
+        this._container.removeEventListener('dblclick', this._boundHandler);
+        d('ChunkIndicator: removed old listener');
+      }
+      
+      // 保存容器引用
+      this._container = container;
+      
+      // 创建绑定的处理函数
+      if (!this._boundHandler) {
+        this._boundHandler = this.handleDoubleClick.bind(this);
+      }
+      
+      // 在容器上监听双击事件（事件委托）
+      container.addEventListener('dblclick', this._boundHandler);
+      d('ChunkIndicator: initialized and listening on', container);
     },
     
     handleDoubleClick(e) {
@@ -3292,9 +3289,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         Bilingual.setTotal(plan.length);
         updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
         
-        // 重新初始化分块指示器（确保监听器已添加）
-        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.reinit) {
-          ChunkIndicator.reinit();
+        // 初始化分块指示器（确保监听器已添加）
+        if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+          ChunkIndicator.init();
         }
 
         // 运行
@@ -4251,9 +4248,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       RenderState.setTotal(plan.length);
       Bilingual.setTotal(plan.length);
 
-      // 重新初始化分块指示器（确保监听器已添加）
-      if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.reinit) {
-        ChunkIndicator.reinit();
+      // 初始化分块指示器（确保监听器已添加）
+      if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+        ChunkIndicator.init();
       }
 
       // 显示工具栏
