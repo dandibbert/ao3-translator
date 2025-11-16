@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      0.9.4
+// @version      0.9.5
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2406,52 +2406,50 @@
       // 重置重试计数器
       this._retryCount = 0;
       
-      // 如果已经在这个容器上添加了监听器，直接返回
-      if (this._container === container && this._hasListener) {
-        d('ChunkIndicator: already initialized on this container, skipping');
-        return;
-      }
-      
-      // 如果容器改变了，先移除旧的监听器
-      if (this._container && this._boundHandler && this._hasListener) {
-        if (document.contains(this._container)) {
-          this._container.removeEventListener('dblclick', this._boundHandler);
-          d('ChunkIndicator: removed old listener from previous container');
-        } else {
-          d('ChunkIndicator: old container no longer in DOM');
-        }
-        this._hasListener = false;
-      }
-      
-      // 保存新容器引用
+      const previousContainer = this._container;
       this._container = container;
-      
-      // 创建绑定的处理函数
+
       if (!this._boundHandler) {
         this._boundHandler = this.handleDoubleClick.bind(this);
       }
-      
-      // 在容器上监听双击事件（事件委托）
-      container.addEventListener('dblclick', this._boundHandler);
-      this._hasListener = true;
-      d('ChunkIndicator: initialized and listening on', container);
+
+      // 总是在 document 上监听，避免容器被替换后丢失事件
+      if (!this._hasListener) {
+        document.addEventListener('dblclick', this._boundHandler);
+        this._hasListener = true;
+        d('ChunkIndicator: initialized and listening on', container);
+      } else {
+        if (previousContainer !== container) {
+          d('ChunkIndicator: switched to new container', container);
+        } else {
+          d('ChunkIndicator: listener already active on current container');
+        }
+      }
     },
-    
+
     handleDoubleClick(e) {
-      d('ChunkIndicator: double click detected', e.target);
-      
-      // 阻止默认的文本选择行为
-      e.preventDefault();
-      
-      // 查找最近的 .ao3x-block 元素
-      const block = e.target.closest('.ao3x-block');
-      d('ChunkIndicator: found block', block);
-      
-      if (!block) {
-        d('ChunkIndicator: no block found');
+      const container = this._container;
+      if (!container || !container.isConnected) {
         return;
       }
-      
+
+      if (!container.contains(e.target)) {
+        return; // 仅处理渲染容器内的双击
+      }
+
+      d('ChunkIndicator: double click detected', e.target);
+
+      // 阻止默认的文本选择行为
+      e.preventDefault();
+
+      // 查找最近的 .ao3x-block 元素
+      const block = e.target.closest('.ao3x-block');
+      if (!block || !container.contains(block)) {
+        d('ChunkIndicator: no block found within container');
+        return;
+      }
+      d('ChunkIndicator: found block', block);
+
       // 读取分块编号
       const chunkIndex = block.getAttribute('data-index');
       d('ChunkIndicator: chunk index', chunkIndex);
