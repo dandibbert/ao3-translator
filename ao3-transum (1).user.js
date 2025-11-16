@@ -2389,8 +2389,20 @@
       duration: 1000       // 显示时长 1 秒
     },
     
-    init() {
+    _resolveContainer() {
+      if (this._container && this._container.isConnected) {
+        return this._container;
+      }
       const container = document.querySelector('#ao3x-render');
+      if (container && this._container !== container) {
+        this._container = container;
+        d('ChunkIndicator: rebound to container', container);
+      }
+      return container;
+    },
+
+    init() {
+      const container = this._resolveContainer();
       if (!container) {
         // 限制重试次数，避免无限重试
         if (this._retryCount < this._maxRetries) {
@@ -2405,7 +2417,6 @@
       
       // 重置重试计数器
       this._retryCount = 0;
-      
       const previousContainer = this._container;
       this._container = container;
 
@@ -2428,12 +2439,15 @@
     },
 
     handleDoubleClick(e) {
-      const container = this._container;
+      const container = this._resolveContainer();
       if (!container || !container.isConnected) {
+        d('ChunkIndicator: container missing when handling double click');
         return;
       }
 
-      if (!container.contains(e.target)) {
+      const block = this._getBlockFromTarget(e.target);
+      if (!block || !container.contains(block)) {
+        d('ChunkIndicator: double click outside render container');
         return; // 仅处理渲染容器内的双击
       }
 
@@ -2441,13 +2455,6 @@
 
       // 阻止默认的文本选择行为
       e.preventDefault();
-
-      // 查找最近的 .ao3x-block 元素
-      const block = e.target.closest('.ao3x-block');
-      if (!block || !container.contains(block)) {
-        d('ChunkIndicator: no block found within container');
-        return;
-      }
       d('ChunkIndicator: found block', block);
 
       // 读取分块编号
@@ -2467,6 +2474,17 @@
       // 显示弹窗
       d('ChunkIndicator: showing popup for chunk', chunkIndex);
       this.showPopup(chunkIndex, previewText);
+    },
+
+    _getBlockFromTarget(target) {
+      let node = target;
+      while (node && node !== document) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains('ao3x-block') && !node.classList.contains('ao3x-summary-block')) {
+          return node;
+        }
+        node = node.parentNode;
+      }
+      return null;
     },
     
     showPopup(chunkIndex, previewText) {
@@ -2568,6 +2586,10 @@
       wrapper.appendChild(div);
       c.appendChild(wrapper);
     });
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
+    }
   }
   function appendPlanAnchorsFrom(plan, startIndex){
     const c = ensureRenderContainer();
@@ -2605,6 +2627,10 @@
       const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
       c.appendChild(wrapper);
+    }
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
     }
   }
 
