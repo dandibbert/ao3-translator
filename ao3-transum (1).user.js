@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.1
+// @version      1.0.2
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -161,7 +161,16 @@
       btnSummary.title = '生成章节总结';
 
       // 移除占位按钮，菜单仅保留“下载”和“总结”两个按钮
+      // 创建批量下载按钮
+      const btnBatchDownload = document.createElement('button');
+      btnBatchDownload.className = 'ao3x-btn ao3x-floating-btn';
+      btnBatchDownload.textContent = '📦';
+      btnBatchDownload.title = '批量下载已翻译章节';
+      btnBatchDownload.style.display = 'none'; // 默认隐藏
+      UI._btnBatchDownload = btnBatchDownload; // 保存引用
+
       floatingMenu.appendChild(btnDownload);
+      floatingMenu.appendChild(btnBatchDownload);
       floatingMenu.appendChild(btnSummary);
       wrap.appendChild(floatingMenu);
 
@@ -174,8 +183,17 @@
       const LONG_PRESS_SUPPRESS_MS = 1000;
 
       // 显示/隐藏悬浮菜单
-      const showFloatingMenu = () => {
+      const showFloatingMenu = async () => {
         if (isMenuVisible) return;
+        
+        // 检查是否有多个已翻译章节
+        const translatedChapters = await Controller.getTranslatedChapters();
+        if (translatedChapters && translatedChapters.length > 1) {
+          btnBatchDownload.style.display = '';
+        } else {
+          btnBatchDownload.style.display = 'none';
+        }
+        
         isMenuVisible = true;
         floatingMenu.style.display = 'flex';
         // 添加动画效果
@@ -338,6 +356,13 @@
       btnDownload.addEventListener('click', (e) => {
         e.stopPropagation();
         Controller.downloadTranslation();
+        hideFloatingMenu();
+      });
+
+      // 批量下载按钮事件
+      btnBatchDownload.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Controller.batchDownloadChapters();
         hideFloatingMenu();
       });
 
@@ -1413,6 +1438,103 @@
         }
         .ao3x-chunk-popup-preview{
           font-size:12px;
+        }
+      }
+
+      /* 章节选择对话框 */
+      .ao3x-chapter-dialog{
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.4);
+        backdrop-filter:blur(4px);
+        z-index:99999;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        animation:fadeIn .3s ease;
+      }
+      .ao3x-chapter-dialog-content{
+        background:var(--c-card);
+        border-radius:var(--radius);
+        width:min(90vw, 500px);
+        max-height:80vh;
+        display:flex;
+        flex-direction:column;
+        box-shadow:0 8px 32px rgba(0,0,0,.2);
+      }
+      .ao3x-chapter-dialog-header{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        padding:16px 20px;
+        border-bottom:1px solid var(--c-border);
+      }
+      .ao3x-chapter-dialog-header h3{
+        margin:0;
+        font-size:16px;
+        font-weight:600;
+        color:var(--c-accent);
+      }
+      .ao3x-chapter-dialog-close{
+        width:28px;
+        height:28px;
+        border-radius:var(--radius-full);
+        background:var(--c-soft);
+        border:none;
+        color:var(--c-muted);
+        font-size:20px;
+        line-height:1;
+        cursor:pointer;
+        transition:all .2s;
+      }
+      .ao3x-chapter-dialog-close:hover{
+        background:var(--c-accent);
+        color:white;
+      }
+      .ao3x-chapter-dialog-body{
+        padding:16px 20px;
+        overflow-y:auto;
+        flex:1;
+      }
+      .ao3x-chapter-controls{
+        display:flex;
+        gap:8px;
+        margin-bottom:12px;
+      }
+      .ao3x-chapter-list{
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+      }
+      .ao3x-chapter-item{
+        display:flex;
+        align-items:center;
+        padding:10px 12px;
+        background:var(--c-soft);
+        border-radius:var(--radius);
+        cursor:pointer;
+        transition:all .2s;
+      }
+      .ao3x-chapter-item:hover{
+        background:rgba(179,0,0,0.05);
+      }
+      .ao3x-chapter-item input[type="checkbox"]{
+        margin-right:10px;
+        cursor:pointer;
+      }
+      .ao3x-chapter-dialog-footer{
+        display:flex;
+        gap:12px;
+        padding:16px 20px;
+        border-top:1px solid var(--c-border);
+        justify-content:flex-end;
+      }
+      @keyframes fadeIn{
+        from{
+          opacity:0;
+        }
+        to{
+          opacity:1;
         }
       }
 
@@ -2900,6 +3022,233 @@
         workTitle: workTitle,
         chapterTitle: chapterTitle
       };
+    },
+
+    // 获取当前work的所有已翻译章节
+    async getTranslatedChapters() {
+      try {
+        // 从URL中提取work ID
+        const match = window.location.pathname.match(/\/works\/(\d+)/);
+        if (!match) return [];
+        
+        const workId = match[1];
+        const cacheKeyPrefix = `ao3_translator_/works/${workId}/chapters/`;
+        
+        // 获取所有缓存键
+        const allKeys = GM_ListKeys();
+        const chapterKeys = allKeys.filter(key => key.startsWith(cacheKeyPrefix));
+        
+        // 提取章节信息
+        const chapters = [];
+        for (const key of chapterKeys) {
+          const chapterId = key.replace(cacheKeyPrefix, '');
+          const cacheData = GM_Get(key);
+          
+          if (cacheData && cacheData._map && Object.keys(cacheData._map).length > 0) {
+            chapters.push({
+              id: chapterId,
+              url: `/works/${workId}/chapters/${chapterId}`,
+              cacheKey: key,
+              cacheData: cacheData
+            });
+          }
+        }
+        
+        return chapters;
+      } catch (e) {
+        console.error('[AO3X] Failed to get translated chapters:', e);
+        return [];
+      }
+    },
+
+    // 批量下载已翻译章节
+    async batchDownloadChapters() {
+      try {
+        UI.toast('正在获取已翻译章节列表...');
+        
+        const chapters = await this.getTranslatedChapters();
+        if (!chapters || chapters.length === 0) {
+          UI.toast('没有找到已翻译的章节');
+          return;
+        }
+        
+        if (chapters.length === 1) {
+          UI.toast('只有一个已翻译章节，使用普通下载即可');
+          return;
+        }
+        
+        // 显示章节选择对话框
+        this.showChapterSelectionDialog(chapters);
+        
+      } catch (e) {
+        console.error('[AO3X] Batch download failed:', e);
+        UI.toast('批量下载失败：' + e.message);
+      }
+    },
+
+    // 显示章节选择对话框
+    showChapterSelectionDialog(chapters) {
+      // 创建对话框
+      const dialog = document.createElement('div');
+      dialog.className = 'ao3x-chapter-dialog';
+      dialog.innerHTML = `
+        <div class="ao3x-chapter-dialog-content">
+          <div class="ao3x-chapter-dialog-header">
+            <h3>选择要下载的章节</h3>
+            <button class="ao3x-chapter-dialog-close">×</button>
+          </div>
+          <div class="ao3x-chapter-dialog-body">
+            <div class="ao3x-chapter-controls">
+              <button class="ao3x-btn-mini" id="ao3x-chapter-select-all">全选</button>
+              <button class="ao3x-btn-mini" id="ao3x-chapter-select-none">取消全选</button>
+            </div>
+            <div class="ao3x-chapter-list" id="ao3x-chapter-list"></div>
+          </div>
+          <div class="ao3x-chapter-dialog-footer">
+            <button class="ao3x-btn-ghost" id="ao3x-chapter-cancel">取消</button>
+            <button class="ao3x-btn-primary" id="ao3x-chapter-download">下载选中章节</button>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(dialog);
+      
+      // 填充章节列表
+      const listContainer = dialog.querySelector('#ao3x-chapter-list');
+      chapters.forEach((chapter, index) => {
+        const item = document.createElement('label');
+        item.className = 'ao3x-chapter-item';
+        item.innerHTML = `
+          <input type="checkbox" value="${chapter.id}" checked>
+          <span>Chapter ${chapter.id}</span>
+        `;
+        listContainer.appendChild(item);
+      });
+      
+      // 绑定事件
+      dialog.querySelector('.ao3x-chapter-dialog-close').addEventListener('click', () => {
+        dialog.remove();
+      });
+      
+      dialog.querySelector('#ao3x-chapter-cancel').addEventListener('click', () => {
+        dialog.remove();
+      });
+      
+      dialog.querySelector('#ao3x-chapter-select-all').addEventListener('click', () => {
+        dialog.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+      });
+      
+      dialog.querySelector('#ao3x-chapter-select-none').addEventListener('click', () => {
+        dialog.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+      });
+      
+      dialog.querySelector('#ao3x-chapter-download').addEventListener('click', async () => {
+        const selectedIds = Array.from(dialog.querySelectorAll('input[type="checkbox"]:checked'))
+          .map(cb => cb.value);
+        
+        if (selectedIds.length === 0) {
+          UI.toast('请至少选择一个章节');
+          return;
+        }
+        
+        dialog.remove();
+        await this.downloadSelectedChapters(chapters.filter(c => selectedIds.includes(c.id)));
+      });
+    },
+
+    // 下载选中的章节
+    async downloadSelectedChapters(selectedChapters) {
+      try {
+        UI.toast(`正在下载 ${selectedChapters.length} 个章节...`);
+        
+        const info = this.getWorkInfo();
+        const workTitle = info.workTitle || '作品';
+        
+        let fullText = '';
+        
+        for (const chapter of selectedChapters) {
+          fullText += `\n\n========== Chapter ${chapter.id} ==========\n\n`;
+          
+          const cacheData = chapter.cacheData;
+          const total = Object.keys(cacheData._map || {}).length;
+          
+          for (let i = 0; i < total; i++) {
+            const translation = cacheData._map[String(i)];
+            if (!translation) continue;
+            
+            let plain = '';
+            try {
+              if (this.extractTextWithStructure) {
+                plain = this.extractTextWithStructure(translation) || '';
+              } else {
+                const div = document.createElement('div');
+                div.innerHTML = translation;
+                plain = (div.textContent || '').replace(/\r?\n/g, '\n').trim();
+              }
+            } catch (_) {}
+            
+            if (plain) fullText += plain + '\n\n';
+          }
+        }
+        
+        fullText = fullText.trim();
+        if (!fullText) {
+          UI.toast('翻译内容为空');
+          return;
+        }
+        
+        const fileName = `${workTitle}-批量下载-${selectedChapters.length}章.txt`;
+        
+        // 使用与单章下载相同的逻辑
+        const s = settings.get();
+        const WORKER_ORIGIN = s.download?.workerUrl || '';
+        const ua = navigator.userAgent || '';
+        const hasEvansToken = /\bEvansBrowser\/\d+(?:\.\d+)*\b/i.test(ua);
+        const shouldUseCloud = hasEvansToken;
+        
+        if (shouldUseCloud) {
+          UI.toast('1/2 上传到云端…');
+          const body = new URLSearchParams();
+          body.set('text', fullText);
+          body.set('filename', fileName);
+          
+          const res = await fetch(`${WORKER_ORIGIN}/api/upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body
+          });
+          
+          if (!res.ok) {
+            const err = await res.text().catch(() => res.statusText);
+            UI.toast('上传失败：' + err);
+            return;
+          }
+          
+          const data = await res.json().catch(() => null);
+          if (!data || !data.url) {
+            UI.toast('上传返回无下载链接');
+            return;
+          }
+          
+          UI.toast('2/2 跳转下载…');
+          location.href = data.url;
+        } else {
+          const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          UI.toast(`已下载 ${fileName}`);
+        }
+        
+      } catch (e) {
+        console.error('[AO3X] Download selected chapters failed:', e);
+        UI.toast('下载失败：' + e.message);
+      }
     },
 
 // 下载翻译为TXT文件（完整替换此函数）
