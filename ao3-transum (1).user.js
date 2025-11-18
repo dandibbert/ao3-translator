@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.3
+// @version      1.0.4
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1672,24 +1672,31 @@
   function scrollToChunkStart(chunkIndex) {
     const idx = Number(chunkIndex);
     if (!Number.isFinite(idx)) return;
-    const container = document.querySelector('#ao3x-render');
-    if (!container) {
-      UI.toast('尚未创建翻译区域');
-      return;
+    
+    // 使用与 ChunkIndicator 相同的查找方式：直接在整个文档中查找块元素
+    // 这样即使容器结构变化也能正常工作
+    const allBlocks = document.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+    let block = null;
+    
+    // 遍历所有块，找到匹配的 data-index
+    for (const b of allBlocks) {
+      if (b.getAttribute('data-index') === String(idx)) {
+        block = b;
+        break;
+      }
     }
-    const block = container.querySelector(`.ao3x-block[data-index="${idx}"]:not(.ao3x-summary-block)`);
+    
     if (!block) {
-      // 调试：输出所有块的 data-index 属性
-      const allBlocks = container.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
       const indices = Array.from(allBlocks).map(b => b.getAttribute('data-index')).filter(Boolean);
       d('scrollToChunkStart:block-not-found', { 
         targetIdx: idx, 
         availableIndices: indices,
-        totalBlocks: allBlocks.length 
+        totalBlocks: allBlocks.length
       });
       UI.toast(`未找到块 #${idx}（共 ${allBlocks.length} 个块）`);
       return;
     }
+    
     const anchor = block.querySelector('.ao3x-anchor') || block;
     anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
     block.classList.add('ao3x-block-highlight');
