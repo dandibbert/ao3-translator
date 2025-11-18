@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.2
+// @version      1.0.3
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1679,7 +1679,15 @@
     }
     const block = container.querySelector(`.ao3x-block[data-index="${idx}"]:not(.ao3x-summary-block)`);
     if (!block) {
-      UI.toast(`未找到块 #${idx}`);
+      // 调试：输出所有块的 data-index 属性
+      const allBlocks = container.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+      const indices = Array.from(allBlocks).map(b => b.getAttribute('data-index')).filter(Boolean);
+      d('scrollToChunkStart:block-not-found', { 
+        targetIdx: idx, 
+        availableIndices: indices,
+        totalBlocks: allBlocks.length 
+      });
+      UI.toast(`未找到块 #${idx}（共 ${allBlocks.length} 个块）`);
       return;
     }
     const anchor = block.querySelector('.ao3x-anchor') || block;
@@ -2433,6 +2441,8 @@
           } else if(this.mode==='orig'){
             block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idxStr}"></span>${orig}`;
           }
+          // 确保 data-index 和 data-original-html 属性被保留
+          if (idxStr !== null && idxStr !== undefined) block.setAttribute('data-index', idxStr);
           block.setAttribute('data-original-html', orig);
         });
       }
@@ -2466,10 +2476,8 @@
           </div>
         `;
 
-        // 使用 requestAnimationFrame 减少闪烁
-        requestAnimationFrame(() => {
-          block.innerHTML = `<span class="ao3x-anchor" data-summary-chunk-id="${idx}"></span>${html}`;
-        });
+        // 直接更新 innerHTML，移除 requestAnimationFrame 以避免异步问题
+        block.innerHTML = `<span class="ao3x-anchor" data-summary-chunk-id="${idx}"></span>${html}`;
       });
     },
     renderBilingual(){
@@ -2481,10 +2489,11 @@
         const pairs = Bilingual.pairByParagraph(orig, trans);
         const html = pairs.map(p => `<div class="ao3x-pair"><div class="orig">${p.orig}</div><div class="trans">${p.trans||'<span class="ao3x-muted">（无对应段落）</span>'}</div></div>`).join('');
 
-        // 使用 requestAnimationFrame 减少闪烁
-        requestAnimationFrame(() => {
-          block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idx}"></span>${html}`;
-        });
+        // 直接更新 innerHTML，移除 requestAnimationFrame 以避免异步问题
+        block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idx}"></span>${html}`;
+        // 确保 data-index 和 data-original-html 属性被保留
+        if (idx !== null && idx !== undefined) block.setAttribute('data-index', idx);
+        if (orig) block.setAttribute('data-original-html', orig);
       });
     },
     setBlockTranslation(idx, html){
@@ -2984,17 +2993,25 @@
       });
     }
 
-    if (!container.dataset.jumpBound) {
-      container.addEventListener('click', (event) => {
-        const jumpBtn = event.target.closest('.ao3x-jump-btn');
-        if (!jumpBtn || !container.contains(jumpBtn)) return;
-        event.preventDefault();
-        const index = Number(jumpBtn.getAttribute('data-block-index'));
-        if (!Number.isFinite(index)) return;
-        scrollToChunkStart(index);
-      });
-      container.dataset.jumpBound = '1';
+    // 修复：使用事件委托，无论 innerHTML 如何变化都能正常工作
+    // 移除旧的事件监听器（如果存在）
+    if (container._jumpClickHandler) {
+      container.removeEventListener('click', container._jumpClickHandler);
     }
+    
+    // 创建新的事件处理器并保存引用
+    container._jumpClickHandler = (event) => {
+      const jumpBtn = event.target.closest('.ao3x-jump-btn');
+      if (!jumpBtn || !container.contains(jumpBtn)) return;
+      event.preventDefault();
+      const index = Number(jumpBtn.getAttribute('data-block-index'));
+      d('jumpBtn:clicked', { index, hasFiniteIndex: Number.isFinite(index) });
+      if (!Number.isFinite(index)) return;
+      scrollToChunkStart(index);
+    };
+    
+    container.addEventListener('click', container._jumpClickHandler);
+    d('bindBlockControlEvents:bound', { containerId: container.id });
   }
 
   /* ================= Controller ================= */
