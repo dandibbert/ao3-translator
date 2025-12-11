@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.5
+// @version      1.0.6
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2337,10 +2337,8 @@
 
       // 首次渲染或有占位符时，直接替换全部内容
       if (!prev || hasPlaceholder) {
-        requestAnimationFrame(() => {
-          transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
-          this.lastApplied[i] = cleanHtml;
-        });
+        transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
+        this.lastApplied[i] = cleanHtml;
         return;
       }
 
@@ -2353,25 +2351,14 @@
       if (cleanHtml.startsWith(prev)) {
         const tail = cleanHtml.slice(prev.length);
         if (tail) {
-          requestAnimationFrame(() => {
-            // 再次检查，确保在RAF回调时内容没有被其他地方修改
-            const currentHTML = transDiv.innerHTML || '';
-            if (currentHTML.includes(prev)) {
-              transDiv.insertAdjacentHTML('beforeend', tail);
-              this.lastApplied[i] = cleanHtml;
-            } else {
-              // 如果当前DOM内容已不匹配,全量替换
-              transDiv.innerHTML = cleanHtml;
-              this.lastApplied[i] = cleanHtml;
-            }
-          });
+          // 直接同步追加，不使用 requestAnimationFrame 以避免时序问题
+          transDiv.insertAdjacentHTML('beforeend', tail);
+          this.lastApplied[i] = cleanHtml;
         }
       } else {
         // 内容不连续，全量替换
-        requestAnimationFrame(() => {
-          transDiv.innerHTML = cleanHtml;
-          this.lastApplied[i] = cleanHtml;
-        });
+        transDiv.innerHTML = cleanHtml;
+        this.lastApplied[i] = cleanHtml;
       }
     },
     finalizeCurrent(){
@@ -4458,10 +4445,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
       // 首次渲染或有占位符时，直接替换全部内容
       if (!prev || hasPlaceholder) {
-        requestAnimationFrame(() => {
-          contentDiv.innerHTML = cleanContent || '<span class="ao3x-muted">（待总结）</span>';
-          this._renderState.lastApplied[i] = cleanContent;
-        });
+        contentDiv.innerHTML = cleanContent || '<span class="ao3x-muted">（待总结）</span>';
+        this._renderState.lastApplied[i] = cleanContent;
         return;
       }
 
@@ -4474,25 +4459,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       if (cleanContent.startsWith(prev)) {
         const tail = cleanContent.slice(prev.length);
         if (tail) {
-          requestAnimationFrame(() => {
-            // 再次检查，确保在RAF回调时内容没有被其他地方修改
-            const currentHTML = contentDiv.innerHTML || '';
-            if (currentHTML.includes(prev)) {
-              contentDiv.insertAdjacentHTML('beforeend', tail);
-              this._renderState.lastApplied[i] = cleanContent;
-            } else {
-              // 如果当前DOM内容已不匹配，全量替换
-              contentDiv.innerHTML = cleanContent;
-              this._renderState.lastApplied[i] = cleanContent;
-            }
-          });
+          // 直接同步追加，不使用 requestAnimationFrame 以避免时序问题
+          contentDiv.insertAdjacentHTML('beforeend', tail);
+          this._renderState.lastApplied[i] = cleanContent;
         }
       } else {
         // 内容不连续，全量替换
-        requestAnimationFrame(() => {
-          contentDiv.innerHTML = cleanContent;
-          this._renderState.lastApplied[i] = cleanContent;
-        });
+        contentDiv.innerHTML = cleanContent;
+        this._renderState.lastApplied[i] = cleanContent;
       }
     },
 
