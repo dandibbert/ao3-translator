@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.6
+// @version      1.0.7
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -4455,19 +4455,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         return;
       }
 
-      // 增量更新：仅追加新增部分
-      if (cleanContent.startsWith(prev)) {
-        const tail = cleanContent.slice(prev.length);
-        if (tail) {
-          // 直接同步追加，不使用 requestAnimationFrame 以避免时序问题
-          contentDiv.insertAdjacentHTML('beforeend', tail);
-          this._renderState.lastApplied[i] = cleanContent;
-        }
-      } else {
-        // 内容不连续，全量替换
-        contentDiv.innerHTML = cleanContent;
-        this._renderState.lastApplied[i] = cleanContent;
-      }
+      // 始终使用全量替换而非增量追加，确保显示完整内容
+      // 这避免了增量更新时可能丢失的token片段
+      contentDiv.innerHTML = cleanContent;
+      this._renderState.lastApplied[i] = cleanContent;
     },
 
     // 完成当前段落并推进渲染指针
