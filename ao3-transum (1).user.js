@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.4
+// @version      1.0.5
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2334,23 +2334,40 @@
       }
       const prev = this.lastApplied[i] || '';
       const hasPlaceholder = /\(待译\)/.test(transDiv.textContent || '');
+
+      // 首次渲染或有占位符时，直接替换全部内容
       if (!prev || hasPlaceholder) {
-        // 使用 requestAnimationFrame 减少闪烁
         requestAnimationFrame(() => {
           transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
           this.lastApplied[i] = cleanHtml;
         });
         return;
       }
+
+      // 检查新内容是否与上次完全相同，避免无意义的更新
+      if (cleanHtml === prev) {
+        return;
+      }
+
+      // 增量更新：仅追加新增部分
       if (cleanHtml.startsWith(prev)) {
         const tail = cleanHtml.slice(prev.length);
         if (tail) {
           requestAnimationFrame(() => {
-            transDiv.insertAdjacentHTML('beforeend', tail);
-            this.lastApplied[i] = cleanHtml;
+            // 再次检查，确保在RAF回调时内容没有被其他地方修改
+            const currentHTML = transDiv.innerHTML || '';
+            if (currentHTML.includes(prev)) {
+              transDiv.insertAdjacentHTML('beforeend', tail);
+              this.lastApplied[i] = cleanHtml;
+            } else {
+              // 如果当前DOM内容已不匹配,全量替换
+              transDiv.innerHTML = cleanHtml;
+              this.lastApplied[i] = cleanHtml;
+            }
           });
         }
       } else {
+        // 内容不连续，全量替换
         requestAnimationFrame(() => {
           transDiv.innerHTML = cleanHtml;
           this.lastApplied[i] = cleanHtml;
@@ -4439,6 +4456,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const prev = this._renderState.lastApplied[i] || '';
       const hasPlaceholder = /\(待总结\)/.test(contentDiv.textContent || '');
 
+      // 首次渲染或有占位符时，直接替换全部内容
       if (!prev || hasPlaceholder) {
         requestAnimationFrame(() => {
           contentDiv.innerHTML = cleanContent || '<span class="ao3x-muted">（待总结）</span>';
@@ -4447,15 +4465,30 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         return;
       }
 
+      // 检查新内容是否与上次完全相同，避免无意义的更新
+      if (cleanContent === prev) {
+        return;
+      }
+
+      // 增量更新：仅追加新增部分
       if (cleanContent.startsWith(prev)) {
         const tail = cleanContent.slice(prev.length);
         if (tail) {
           requestAnimationFrame(() => {
-            contentDiv.insertAdjacentHTML('beforeend', tail);
-            this._renderState.lastApplied[i] = cleanContent;
+            // 再次检查，确保在RAF回调时内容没有被其他地方修改
+            const currentHTML = contentDiv.innerHTML || '';
+            if (currentHTML.includes(prev)) {
+              contentDiv.insertAdjacentHTML('beforeend', tail);
+              this._renderState.lastApplied[i] = cleanContent;
+            } else {
+              // 如果当前DOM内容已不匹配，全量替换
+              contentDiv.innerHTML = cleanContent;
+              this._renderState.lastApplied[i] = cleanContent;
+            }
           });
         }
       } else {
+        // 内容不连续，全量替换
         requestAnimationFrame(() => {
           contentDiv.innerHTML = cleanContent;
           this._renderState.lastApplied[i] = cleanContent;
@@ -4708,12 +4741,23 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     _dirty: Object.create(null),
     _raf: null,
     _last: 0,
+    _accumulated: Object.create(null), // 记录已累积的完整内容，用于去重
     push(i, delta, apply) {
+      // 确保delta不为空
+      if (!delta) return;
+
+      // 累积新增内容到缓冲区
+      const prevLen = (this._buf[i] || '').length;
       this._buf[i] = (this._buf[i] || '') + delta;
+
+      // 记录已累积的内容，用于后续去重检查
+      this._accumulated[i] = this._buf[i];
+
       this._dirty[i] = true;
       this.schedule((k, clean)=>apply(k, clean));
     },
     done(i, apply) {
+      // 标记为脏，触发最终渲染
       this._dirty[i] = true;
       this.schedule((k, clean)=>apply(k, clean), true);
     },
@@ -4727,9 +4771,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       if (typeof i === 'number') {
         this._buf[i] = '';
         this._dirty[i] = false;
+        this._accumulated[i] = '';
       } else {
         this._buf = Object.create(null);
         this._dirty = Object.create(null);
+        this._accumulated = Object.create(null);
       }
     },
     schedule(apply, force = false) {
