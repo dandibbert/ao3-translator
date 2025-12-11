@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.7
+// @version      1.0.8
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -3986,13 +3986,16 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           handleFinishReason(fr, `single#${i}`);
         },
         onDone: async () => {
+          // 同步获取完整内容，避免异步调度导致的内容丢失
+          const finalRaw = Streamer._buf[i] || '';
+          const finalHtml = /[<][a-zA-Z]/.test(finalRaw) ? finalRaw : finalRaw.replace(/\n/g, '<br/>');
+          const finalClean = sanitizeHTML(finalHtml);
+
+          // 立即保存和渲染完整内容
+          TransStore.set(String(i), finalClean);
           TransStore.markDone(i);
-          Streamer.done(i, (k, clean) => { View.setBlockTranslation(k, clean); });
-          // Ensure final content is applied once before advancing
-          try {
-            const cached = TransStore.get(String(i)) || '';
-            if (cached) RenderState.applyIncremental(i, cached);
-          } catch {}
+          View.setBlockTranslation(i, finalClean);
+
           RenderState.finalizeCurrent();
           finalFlushAll(1);
           UI.updateToolbarState(); // 更新工具栏状态
@@ -4113,21 +4116,28 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             }
           },
           onDone: async () => {
-            TransStore.markDone(i);
             inFlight--; completed++;
             d('chunk:done', {i, ms: Math.round(performance.now()-begin)});
-            Streamer.done(i, (k, clean) => { View.setBlockTranslation(k, clean); });
-            // Ensure final content is applied once before advancing
-            try {
-              const cached = TransStore.get(String(i)) || '';
-              if (cached) RenderState.applyIncremental(i, cached);
-            } catch {}
+
+            // 同步获取完整内容，避免异步调度导致的内容丢失
+            const finalRaw = Streamer._buf[i] || '';
+            const finalHtml = /[<][a-zA-Z]/.test(finalRaw) ? finalRaw : finalRaw.replace(/\n/g, '<br/>');
+            const finalClean = sanitizeHTML(finalHtml);
+
+            // 立即保存和渲染完整内容
+            TransStore.set(String(i), finalClean);
+            TransStore.markDone(i);
+            View.setBlockTranslation(i, finalClean);
+
+            // 确保最终内容被应用
+            if (RenderState.canRender(i)) {
+              RenderState.applyIncremental(i, finalClean);
+            }
 
             // ★ 动态校准：首个完成的块，实测 out/in（真实 token）
             if (!calibrated) {
               calibrated = true;
-              const outHtml  = TransStore.get(String(i)) || '';
-              const outTok   = await estimateTokensForText(stripHtmlToText(outHtml));
+              const outTok   = await estimateTokensForText(stripHtmlToText(finalClean));
               const inTok    = plan[i].inTok || 1;
               let observedK  = outTok / inTok;
               // 限制范围，避免异常
@@ -4543,24 +4553,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           handleFinishReason(fr, `summary-single#${i}`);
         },
         onDone: () => {
-          SummaryStore.markDone(i);
-          // 使用专用 SummaryStreamer 的完成快照，确保最后一帧一致
-          SummaryStreamer.done(i, (k, clean) => {
-            SummaryStore.set(String(k), clean);
-            if (this.canRender(k)) {
-              this.applyIncremental(k, clean);
-            }
-          });
+          // 同步获取完整内容，避免异步调度导致的内容丢失
+          const finalRaw = SummaryStreamer._buf[i] || '';
+          const finalHtml = /[<][a-zA-Z]/.test(finalRaw) ? finalRaw : finalRaw.replace(/\n/g, '<br/>');
+          const finalClean = sanitizeHTML(finalHtml);
 
-          // 兜底：若已有最终缓存，确保渲染（与翻译部分保持一致策略）
-          try {
-            const finalContent = SummaryStore.get(String(i)) || '';
-            if (finalContent) this.applyIncremental(i, finalContent);
-          } catch {}
+          // 立即保存和渲染完整内容
+          SummaryStore.set(String(i), finalClean);
+          SummaryStore.markDone(i);
+
+          if (this.canRender(i)) {
+            this.applyIncremental(i, finalClean);
+          }
 
           this.finalizeCurrent();
           this.updateSummaryKV({ 状态: '已完成', 进度: '1/1' });
-          d('summary:single:completed', { tokens: { in: inTok, maxOut: maxTokensLocal } });
+          d('summary:single:completed', { tokens: { in: inTok, maxOut: maxTokensLocal }, finalLength: finalRaw.length });
         },
         onError: (e) => {
           const msg = `<p class="ao3x-muted">[总结失败：${e.message}]</p>`;
@@ -4643,25 +4651,23 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             handleFinishReason(fr, `summary-chunk#${i}`);
           },
           onDone: () => {
-            SummaryStore.markDone(i);
             inFlight--;
             completed++;
 
             d('summary:chunk:done', { i });
 
-            // 使用专用 SummaryStreamer 的完成快照，确保最后一帧一致
-            SummaryStreamer.done(i, (k, clean) => {
-              SummaryStore.set(String(k), clean);
-              if (this.canRender(k)) {
-                this.applyIncremental(k, clean);
-              }
-            });
+            // 同步获取完整内容，避免异步调度导致的内容丢失
+            const finalRaw = SummaryStreamer._buf[i] || '';
+            const finalHtml = /[<][a-zA-Z]/.test(finalRaw) ? finalRaw : finalRaw.replace(/\n/g, '<br/>');
+            const finalClean = sanitizeHTML(finalHtml);
 
-            // 兜底：若已有最终缓存，确保渲染
-            try {
-              const finalContent = SummaryStore.get(String(i)) || '';
-              if (finalContent && this.canRender(i)) this.applyIncremental(i, finalContent);
-            } catch {}
+            // 立即保存和渲染完整内容
+            SummaryStore.set(String(i), finalClean);
+            SummaryStore.markDone(i);
+
+            if (this.canRender(i)) {
+              this.applyIncremental(i, finalClean);
+            }
 
             this.finalizeCurrent();
             this.updateSummaryKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/${N}` });
