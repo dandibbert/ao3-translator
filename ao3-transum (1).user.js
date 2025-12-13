@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.4
+// @version      1.1.5
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1756,27 +1756,39 @@
 
   // 折叠按钮处理函数（使用事件委托）
   function togglePlanHandler(e) {
-    if (!e.target.classList.contains('ao3x-plan-toggle')) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const btn = target.closest('.ao3x-plan-toggle');
+    if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
 
     const box = e.currentTarget;
     const body = box.querySelector('.ao3x-plan-body');
-    const btn = e.target;
 
     if (body && btn) {
       const isCollapsed = body.classList.toggle('collapsed');
-      // 清空按钮内容后再设置，确保没有残留
-      btn.innerHTML = '';
-      btn.textContent = isCollapsed ? '▸' : '▾';
+      // 用 replaceChildren 避免残留文本节点跑到别处（出现“↓”的根源之一）
+      btn.replaceChildren(document.createTextNode(isCollapsed ? '▸' : '▾'));
       console.log('[togglePlanHandler] 折叠状态:', isCollapsed, '按钮文本:', btn.textContent);
-
-      // 额外检查：清理可能存在的 stray text node（例如那个↓）
-      const kv = body.querySelector('#ao3x-kv');
-      if (kv && kv.nextSibling && kv.nextSibling.nodeType === Node.TEXT_NODE) {
-         kv.nextSibling.remove();
-      }
     }
+
+    // 兜底清理：移除 KV 后面偶发出现的“↓/▾/▸”文本节点（不应出现在统计文本下方）
+    cleanupPlanStrayGlyphText(box);
+  }
+  const _ao3xStrayGlyphRe = /^[▾▸↓]+$/;
+  function cleanupPlanStrayGlyphText(box){
+    if (!box || !(box instanceof Element)) return;
+    const kvs = box.querySelectorAll('.ao3x-kv');
+    kvs.forEach(kv => {
+      let n = kv.nextSibling;
+      while (n && n.nodeType === Node.TEXT_NODE) {
+        const trimmed = (n.textContent || '').trim();
+        const next = n.nextSibling;
+        if (trimmed && _ao3xStrayGlyphRe.test(trimmed)) n.remove();
+        n = next;
+      }
+    });
   }
   function updateKV(kv, kvId = 'ao3x-kv'){
     // 直接使用 document.querySelector，确保可靠性
@@ -1791,12 +1803,8 @@
       return;
     }
 
-    // 检查容器后面是否有额外的元素（可能是导致↓符号的原因）
-    const nextSibling = elem.nextSibling;
-    if(nextSibling && nextSibling.nodeType === Node.TEXT_NODE && nextSibling.textContent.trim()) {
-      console.warn('[updateKV] 发现KV容器后有额外文本节点:', nextSibling.textContent);
-      nextSibling.remove();
-    }
+    // 清理 KV 后面偶发出现的“↓/▾/▸”文本节点（通常来自某些浏览器/脚本的怪异DOM插入）
+    cleanupPlanStrayGlyphText(elem.parentElement);
 
     // 修复变量名冲突，使用更清晰的命名
     const html = Object.entries(kv).map(([key, val]) =>
@@ -1807,11 +1815,8 @@
     elem.innerHTML = '';
     elem.innerHTML = html;
 
-    // 再次检查是否有额外节点被插入
-    if(elem.nextSibling && elem.nextSibling.nodeType === Node.TEXT_NODE) {
-      console.warn('[updateKV] 更新后发现额外节点，清理中...');
-      elem.nextSibling.remove();
-    }
+    // 再次兜底清理
+    cleanupPlanStrayGlyphText(elem.parentElement);
 
     console.log(`[updateKV] 更新成功 #${kvId}:`, kv);
   }
@@ -3070,6 +3075,9 @@
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
 
+    // 立即初始化统计显示（同步），避免 setTimeout 覆盖“单块翻译中”的统计
+    updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+
     PlanStore.clear();
     plan.forEach((p,i)=>{
       const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
@@ -4162,8 +4170,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const s = settings.get();
       const i = 0;
 
-      // 更新统计：开始翻译
-      updateKV({ 状态: '翻译中', 进度: '1/1' });
+      // 更新统计：开始翻译（与并发模式一致）
+      let inFlight = 1, completed = 0, failed = 0;
+      updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: '0/1', 状态: '翻译中' });
 
       const payload = {
         model: s.model.id,
@@ -4182,7 +4191,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         label:`single#${i}`,
         onAttempt: (attempt) => {
           if (attempt === 1) return;
-          updateKV({ 状态: '重试中', 尝试: `第${attempt}次` });
+          updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/1`, 状态: '重试中', 尝试: `第${attempt}次` });
           if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
           TransStore.set(String(i), '');
           if (TransStore._done) delete TransStore._done[i];
@@ -4196,7 +4205,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         },
         onDone: async () => {
           // 更新统计：完成
-          updateKV({ 状态: '已完成', 进度: '1/1' });
+          inFlight = 0; completed = 1;
+          updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: '1/1', 状态: '已完成' });
 
           // 同步获取完整内容，避免异步调度导致的内容丢失
           const finalRaw = Streamer._buf[i] || '';
@@ -4216,6 +4226,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           }
           },
           onError: (e)=>{
+            inFlight = 0; failed = 1;
+            updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/1`, 状态: '失败' });
             // Mark as done with failure note so render can advance and UI不会卡住
             const msg = `<p class="ao3x-muted">[请求失败：${e.message}]</p>`;
             const prev = TransStore.get(String(i)) || '';
@@ -4935,21 +4947,23 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
   // 总结计划折叠按钮处理函数
   function toggleSummaryPlanHandler(e) {
-    if (!e.target.classList.contains('ao3x-plan-toggle')) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const btn = target.closest('.ao3x-plan-toggle');
+    if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
 
     const box = e.currentTarget;
     const body = box.querySelector('.ao3x-plan-body');
-    const btn = e.target;
 
     if (body && btn) {
       const isCollapsed = body.classList.toggle('collapsed');
-      // 清空按钮内容后再设置，确保没有残留
-      btn.innerHTML = '';
-      btn.textContent = isCollapsed ? '▸' : '▾';
+      btn.replaceChildren(document.createTextNode(isCollapsed ? '▸' : '▾'));
       console.log('[toggleSummaryPlanHandler] 折叠状态:', isCollapsed, '按钮文本:', btn.textContent);
     }
+
+    cleanupPlanStrayGlyphText(box);
   }
 
   /* ================= Streamer（增量 + 有序；含实时快照） ================= */
