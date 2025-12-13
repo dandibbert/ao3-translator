@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.1
+// @version      1.1.2
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1729,32 +1729,45 @@
         <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
       </div>
     `;
+
+    // 保存当前折叠状态
+    const oldBody = box.querySelector('.ao3x-plan-body');
+    const wasCollapsed = oldBody && oldBody.classList.contains('collapsed');
+
     box.innerHTML = `
       <div class="ao3x-plan-header">
         <h4>翻译计划：共 ${plan.length} 块</h4>
-        <button class="ao3x-plan-toggle" type="button" title="折叠/展开">▾</button>
+        <button class="ao3x-plan-toggle" type="button" title="折叠/展开">${wasCollapsed ? '▸' : '▾'}</button>
       </div>
-      <div class="ao3x-plan-body">
+      <div class="ao3x-plan-body${wasCollapsed ? ' collapsed' : ''}">
         <div class="ao3x-plan-controls">${controls}</div>
         <div class="ao3x-plan-rows">${rows}</div>
         <div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>
       </div>
     `;
 
-    // 绑定折叠按钮事件
-    const toggleBtn = box.querySelector('.ao3x-plan-toggle');
-    if(toggleBtn){
-      toggleBtn.addEventListener('click', ()=>{
-        const body = box.querySelector('.ao3x-plan-body');
-        if(body){
-          body.classList.toggle('collapsed');
-          toggleBtn.textContent = body.classList.contains('collapsed') ? '▸' : '▾';
-        }
-      });
-    }
+    // 使用事件委托绑定折叠按钮事件，避免重复绑定
+    box.removeEventListener('click', togglePlanHandler);
+    box.addEventListener('click', togglePlanHandler);
 
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
+  }
+
+  // 折叠按钮处理函数（使用事件委托）
+  function togglePlanHandler(e) {
+    if (!e.target.classList.contains('ao3x-plan-toggle')) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const box = e.currentTarget;
+    const body = box.querySelector('.ao3x-plan-body');
+    const btn = e.target;
+
+    if (body) {
+      const isCollapsed = body.classList.toggle('collapsed');
+      btn.textContent = isCollapsed ? '▸' : '▾';
+    }
   }
   function updateKV(kv, kvId = 'ao3x-kv'){
     const k = $(`#${kvId}`);
@@ -3012,17 +3025,9 @@
       </div>
     `;
 
-    // 绑定折叠按钮事件
-    const toggleBtn = box.querySelector('.ao3x-plan-toggle');
-    if(toggleBtn){
-      toggleBtn.addEventListener('click', ()=>{
-        const body = box.querySelector('.ao3x-plan-body');
-        if(body){
-          body.classList.toggle('collapsed');
-          toggleBtn.textContent = body.classList.contains('collapsed') ? '▸' : '▾';
-        }
-      });
-    }
+    // 使用事件委托绑定折叠按钮事件
+    box.removeEventListener('click', togglePlanHandler);
+    box.addEventListener('click', togglePlanHandler);
 
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
@@ -3045,6 +3050,11 @@
     const c = ensureRenderContainer();
     let box = c.querySelector('#ao3x-plan');
     if (!box){ box=document.createElement('div'); box.id='ao3x-plan'; box.className='ao3x-plan'; c.prepend(box); }
+
+    // 保存当前折叠状态
+    const oldBody = box.querySelector('.ao3x-plan-body');
+    const wasCollapsed = oldBody && oldBody.classList.contains('collapsed');
+
     // Update plan header count
     const rows = plan.slice(startIndex).map((p,i)=>{
       const idx = startIndex + i;
@@ -3052,7 +3062,7 @@
       return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${idx}" title="跳转到块 #${idx}">📍</button><b>块 #${idx}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
     const kv = `<div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>`;
-    const headHtml = `<h4>翻译计划：共 ${plan.length} 块</h4><button class="ao3x-plan-toggle" type="button" title="折叠/展开">▾</button>`;
+    const headHtml = `<h4>翻译计划：共 ${plan.length} 块</h4><button class="ao3x-plan-toggle" type="button" title="折叠/展开">${wasCollapsed ? '▸' : '▾'}</button>`;
     const controls = `
       <div class="ao3x-block-controls">
         <button id="ao3x-select-all" class="ao3x-btn-mini">全选</button>
@@ -3065,24 +3075,16 @@
 
     box.innerHTML = `
       <div class="ao3x-plan-header">${headHtml}</div>
-      <div class="ao3x-plan-body">
+      <div class="ao3x-plan-body${wasCollapsed ? ' collapsed' : ''}">
         <div class="ao3x-plan-controls">${controls}</div>
         <div class="ao3x-plan-rows">${fixed}${rows}</div>
         ${kv}
       </div>
     `;
 
-    // 重新绑定折叠按钮事件
-    const toggleBtn = box.querySelector('.ao3x-plan-toggle');
-    if(toggleBtn){
-      toggleBtn.addEventListener('click', ()=>{
-        const body = box.querySelector('.ao3x-plan-body');
-        if(body){
-          body.classList.toggle('collapsed');
-          toggleBtn.textContent = body.classList.contains('collapsed') ? '▸' : '▾';
-        }
-      });
-    }
+    // 使用事件委托重新绑定折叠按钮事件
+    box.removeEventListener('click', togglePlanHandler);
+    box.addEventListener('click', togglePlanHandler);
 
     // 重新绑定控制按钮事件
     bindBlockControlEvents(box);
@@ -4193,14 +4195,17 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       Bilingual.setTotal(N);
 
       let inFlight=0, nextToStart=0, completed=0, failed=0;
-      // 初始化统计显示
-      updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
 
       let calibrated = false;
       let liveRatio  = ratio; // 运行期实时 ratio
       let currentBudget = Math.floor(Math.max(0, Math.min(userMaxTokens/liveRatio, (modelCw - promptTokens - reserve)/(1+liveRatio))) * (settings.get().planner.packSlack || 0.95));
 
       const started = new Set(); // 已经发出的 index
+
+      // 等待下一帧再初始化统计显示，确保DOM已准备好
+      requestAnimationFrame(() => {
+        updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
+      });
 
       const startNext = ()=>{ while(inFlight < concurrency && nextToStart < plan.length){ startChunk(nextToStart++); } };
 
@@ -4550,6 +4555,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         }
       }
 
+      // 保存当前折叠状态
+      const oldBody = summaryPlanBox.querySelector('.ao3x-plan-body');
+      const wasCollapsed = oldBody && oldBody.classList.contains('collapsed');
+
       const rows = plan.map((p, i) => {
         const estIn = p.inTok != null ? p.inTok : 0;
         return `<div class="row"><b>段落 #${i}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
@@ -4558,25 +4567,17 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       summaryPlanBox.innerHTML = `
         <div class="ao3x-plan-header">
           <h4>总结计划：共 ${plan.length} 段</h4>
-          <button class="ao3x-plan-toggle" type="button" title="折叠/展开">▾</button>
+          <button class="ao3x-plan-toggle" type="button" title="折叠/展开">${wasCollapsed ? '▸' : '▾'}</button>
         </div>
-        <div class="ao3x-plan-body">
+        <div class="ao3x-plan-body${wasCollapsed ? ' collapsed' : ''}">
           <div class="ao3x-plan-rows">${rows}</div>
           <div class="ao3x-kv" id="ao3x-summary-kv" style="padding:0 16px 12px;"></div>
         </div>
       `;
 
-      // 绑定折叠按钮事件
-      const toggleBtn = summaryPlanBox.querySelector('.ao3x-plan-toggle');
-      if(toggleBtn){
-        toggleBtn.addEventListener('click', ()=>{
-          const body = summaryPlanBox.querySelector('.ao3x-plan-body');
-          if(body){
-            body.classList.toggle('collapsed');
-            toggleBtn.textContent = body.classList.contains('collapsed') ? '▸' : '▾';
-          }
-        });
-      }
+      // 使用事件委托绑定折叠按钮事件
+      summaryPlanBox.removeEventListener('click', toggleSummaryPlanHandler);
+      summaryPlanBox.addEventListener('click', toggleSummaryPlanHandler);
 
       // 2. 创建总结内容容器，放在总结计划之后，翻译计划之前
       let summaryContentContainer = $('#ao3x-summary-content-container', c);
@@ -4896,6 +4897,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       d('summary:concurrent:completed', { total: N, completed, failed });
     }
   };
+
+  // 总结计划折叠按钮处理函数
+  function toggleSummaryPlanHandler(e) {
+    if (!e.target.classList.contains('ao3x-plan-toggle')) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const box = e.currentTarget;
+    const body = box.querySelector('.ao3x-plan-body');
+    const btn = e.target;
+
+    if (body) {
+      const isCollapsed = body.classList.toggle('collapsed');
+      btn.textContent = isCollapsed ? '▸' : '▾';
+    }
+  }
 
   /* ================= Streamer（增量 + 有序；含实时快照） ================= */
   const createStreamer = () => ({
