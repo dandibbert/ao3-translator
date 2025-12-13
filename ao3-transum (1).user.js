@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.3
+// @version      1.1.4
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1784,6 +1784,14 @@
       }
       return;
     }
+
+    // 检查容器后面是否有额外的元素（可能是导致↓符号的原因）
+    const nextSibling = elem.nextSibling;
+    if(nextSibling && nextSibling.nodeType === Node.TEXT_NODE && nextSibling.textContent.trim()) {
+      console.warn('[updateKV] 发现KV容器后有额外文本节点:', nextSibling.textContent);
+      nextSibling.remove();
+    }
+
     // 修复变量名冲突，使用更清晰的命名
     const html = Object.entries(kv).map(([key, val]) =>
       `<span>${escapeHTML(key)}: ${escapeHTML(String(val))}</span>`
@@ -1792,6 +1800,13 @@
     // 清空后再设置，确保没有残留内容
     elem.innerHTML = '';
     elem.innerHTML = html;
+
+    // 再次检查是否有额外节点被插入
+    if(elem.nextSibling && elem.nextSibling.nodeType === Node.TEXT_NODE) {
+      console.warn('[updateKV] 更新后发现额外节点，清理中...');
+      elem.nextSibling.remove();
+    }
+
     console.log(`[updateKV] 更新成功 #${kvId}:`, kv);
   }
 
@@ -3083,7 +3098,7 @@
       const estIn = p.inTok != null ? p.inTok : 0;
       return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${idx}" title="跳转到块 #${idx}">📍</button><b>块 #${idx}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
-    const kv = `<div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>`;
+
     const headHtml = `<h4>翻译计划：共 ${plan.length} 块</h4><button class="ao3x-plan-toggle" type="button" title="折叠/展开">${wasCollapsed ? '▸' : '▾'}</button>`;
     const controls = `
       <div class="ao3x-block-controls">
@@ -3095,14 +3110,8 @@
     `;
     const fixed = Array.from(box.querySelectorAll('.row')).slice(0, startIndex).map(n=>n.outerHTML).join('');
 
-    box.innerHTML = `
-      <div class="ao3x-plan-header">${headHtml}</div>
-      <div class="ao3x-plan-body${wasCollapsed ? ' collapsed' : ''}">
-        <div class="ao3x-plan-controls">${controls}</div>
-        <div class="ao3x-plan-rows">${fixed}${rows}</div>
-        ${kv}
-      </div>
-    `;
+    // 不要在这里创建 KV 容器字符串，直接在 innerHTML 中嵌入
+    box.innerHTML = `<div class="ao3x-plan-header">${headHtml}</div><div class="ao3x-plan-body${wasCollapsed ? ' collapsed' : ''}"><div class="ao3x-plan-controls">${controls}</div><div class="ao3x-plan-rows">${fixed}${rows}</div><div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div></div>`;
 
     // 使用事件委托重新绑定折叠按钮事件
     box.removeEventListener('click', togglePlanHandler);
@@ -4151,6 +4160,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
       const s = settings.get();
       const i = 0;
+
+      // 更新统计：开始翻译
+      updateKV({ 状态: '翻译中', 进度: '1/1' });
+
       const payload = {
         model: s.model.id,
         messages: [
@@ -4168,6 +4181,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         label:`single#${i}`,
         onAttempt: (attempt) => {
           if (attempt === 1) return;
+          updateKV({ 状态: '重试中', 尝试: `第${attempt}次` });
           if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
           TransStore.set(String(i), '');
           if (TransStore._done) delete TransStore._done[i];
@@ -4180,6 +4194,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           handleFinishReason(fr, `single#${i}`);
         },
         onDone: async () => {
+          // 更新统计：完成
+          updateKV({ 状态: '已完成', 进度: '1/1' });
+
           // 同步获取完整内容，避免异步调度导致的内容丢失
           const finalRaw = Streamer._buf[i] || '';
           const finalHtml = /[<][a-zA-Z]/.test(finalRaw) ? finalRaw : finalRaw.replace(/\n/g, '<br/>');
