@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.8
+// @version      1.0.9
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -3058,20 +3058,20 @@
         // 从URL中提取work ID
         const match = window.location.pathname.match(/\/works\/(\d+)/);
         if (!match) return [];
-        
+
         const workId = match[1];
         const cacheKeyPrefix = `ao3_translator_/works/${workId}/chapters/`;
-        
+
         // 获取所有缓存键
         const allKeys = GM_ListKeys();
         const chapterKeys = allKeys.filter(key => key.startsWith(cacheKeyPrefix));
-        
+
         // 提取章节信息
         const chapters = [];
         for (const key of chapterKeys) {
           const chapterId = key.replace(cacheKeyPrefix, '');
           const cacheData = GM_Get(key);
-          
+
           if (cacheData && cacheData._map && Object.keys(cacheData._map).length > 0) {
             chapters.push({
               id: chapterId,
@@ -3081,7 +3081,14 @@
             });
           }
         }
-        
+
+        // 按章节ID数字顺序排序
+        chapters.sort((a, b) => {
+          const numA = parseInt(a.id, 10);
+          const numB = parseInt(b.id, 10);
+          return numA - numB;
+        });
+
         return chapters;
       } catch (e) {
         console.error('[AO3X] Failed to get translated chapters:', e);
