@@ -1770,6 +1770,12 @@
       btn.innerHTML = '';
       btn.textContent = isCollapsed ? '▸' : '▾';
       console.log('[togglePlanHandler] 折叠状态:', isCollapsed, '按钮文本:', btn.textContent);
+
+      // 额外检查：清理可能存在的 stray text node（例如那个↓）
+      const kv = body.querySelector('#ao3x-kv');
+      if (kv && kv.nextSibling && kv.nextSibling.nodeType === Node.TEXT_NODE) {
+         kv.nextSibling.remove();
+      }
     }
   }
   function updateKV(kv, kvId = 'ao3x-kv'){
@@ -3063,11 +3069,6 @@
 
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
-
-    // 立即初始化统计显示，确保可见
-    setTimeout(() => {
-      updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
-    }, 10);
 
     PlanStore.clear();
     plan.forEach((p,i)=>{
