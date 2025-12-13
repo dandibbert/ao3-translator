@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.2
+// @version      1.1.3
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1764,18 +1764,35 @@
     const body = box.querySelector('.ao3x-plan-body');
     const btn = e.target;
 
-    if (body) {
+    if (body && btn) {
       const isCollapsed = body.classList.toggle('collapsed');
+      // 清空按钮内容后再设置，确保没有残留
+      btn.innerHTML = '';
       btn.textContent = isCollapsed ? '▸' : '▾';
+      console.log('[togglePlanHandler] 折叠状态:', isCollapsed, '按钮文本:', btn.textContent);
     }
   }
   function updateKV(kv, kvId = 'ao3x-kv'){
-    const k = $(`#${kvId}`);
-    if(!k) {
-      console.warn(`updateKV: 找不到容器 #${kvId}`);
+    // 直接使用 document.querySelector，确保可靠性
+    const elem = document.querySelector(`#${kvId}`);
+    if(!elem) {
+      console.error(`[updateKV] 找不到容器 #${kvId}`, 'kv数据:', kv);
+      // 尝试查找是否有重复的元素
+      const allElems = document.querySelectorAll(`#${kvId}`);
+      if(allElems.length > 1) {
+        console.error(`[updateKV] 发现${allElems.length}个重复的 #${kvId} 元素！`);
+      }
       return;
     }
-    k.innerHTML = Object.entries(kv).map(([k,v])=>`<span>${k}: ${escapeHTML(String(v))}</span>`).join('');
+    // 修复变量名冲突，使用更清晰的命名
+    const html = Object.entries(kv).map(([key, val]) =>
+      `<span>${escapeHTML(key)}: ${escapeHTML(String(val))}</span>`
+    ).join('');
+
+    // 清空后再设置，确保没有残留内容
+    elem.innerHTML = '';
+    elem.innerHTML = html;
+    console.log(`[updateKV] 更新成功 #${kvId}:`, kv);
   }
 
   function scrollToChunkStart(chunkIndex) {
@@ -3032,6 +3049,11 @@
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
 
+    // 立即初始化统计显示，确保可见
+    setTimeout(() => {
+      updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+    }, 10);
+
     PlanStore.clear();
     plan.forEach((p,i)=>{
       const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
@@ -4202,11 +4224,6 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
       const started = new Set(); // 已经发出的 index
 
-      // 等待下一帧再初始化统计显示，确保DOM已准备好
-      requestAnimationFrame(() => {
-        updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
-      });
-
       const startNext = ()=>{ while(inFlight < concurrency && nextToStart < plan.length){ startChunk(nextToStart++); } };
 
       const startChunk = (i)=>{
@@ -4908,9 +4925,12 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     const body = box.querySelector('.ao3x-plan-body');
     const btn = e.target;
 
-    if (body) {
+    if (body && btn) {
       const isCollapsed = body.classList.toggle('collapsed');
+      // 清空按钮内容后再设置，确保没有残留
+      btn.innerHTML = '';
       btn.textContent = isCollapsed ? '▸' : '▾';
+      console.log('[toggleSummaryPlanHandler] 折叠状态:', isCollapsed, '按钮文本:', btn.textContent);
     }
   }
 
