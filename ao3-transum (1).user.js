@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.0.9
+// @version      1.1.0
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1180,13 +1180,26 @@
 
       /* 内容区域 */
       .ao3x-render{margin:0 auto;max-width:900px;padding:0 16px}
-      .ao3x-translation{line-height:1.7;min-height:1em}
-      .ao3x-block{margin-bottom:1em;font-size:var(--translation-font-size,16px);line-height:1.7}
+      .ao3x-translation{
+        line-height:1.7;min-height:1em;
+        font-size:var(--translation-font-size,16px);
+        min-height:60px;
+        /* 渲染优化 */
+        contain:layout style;
+        content-visibility:auto;
+        will-change:contents;
+      }
+      .ao3x-block{
+        margin-bottom:1em;
+        font-size:var(--translation-font-size,16px);
+        line-height:1.7;
+        /* 防止闪烁的关键设置 */
+        contain:layout;
+        transform:translateZ(0);
+        backface-visibility:hidden;
+      }
       .ao3x-muted{opacity:.5;font-style:italic}
       .ao3x-small{font-size:12px;color:var(--c-muted)}
-
-      /* 动态字体大小 */
-      .ao3x-translation{font-size:var(--translation-font-size,16px);min-height:60px;transition:min-height 0.2s ease}
 
       /* 引用样式 */
       .ao3x-translation blockquote{
@@ -1197,6 +1210,25 @@
         color:var(--c-fg);
         background:var(--c-soft);
         border-radius:0 var(--radius) var(--radius) 0;
+      }
+
+      /* 图片和媒体优化 - 防止加载时布局抖动 */
+      .ao3x-translation img,
+      .ao3x-translation video,
+      .ao3x-translation iframe{
+        max-width:100%;
+        height:auto;
+        display:block;
+        /* 为图片预留空间，防止加载时抖动 */
+        min-height:100px;
+        background:var(--c-soft);
+        /* GPU加速，减少闪烁 */
+        transform:translateZ(0);
+        backface-visibility:hidden;
+      }
+      .ao3x-translation img[src]{
+        /* 图片加载后移除最小高度限制 */
+        min-height:0;
       }
 
       /* 双语对照 */
@@ -1232,15 +1264,48 @@
       /* 计划面板 */
       .ao3x-plan{
         border:1px solid var(--c-border);background:white;
-        border-radius:var(--radius);padding:12px 16px;margin:16px 0;
+        border-radius:var(--radius);margin:16px 0;
+        overflow:hidden;
+      }
+      .ao3x-plan-header{
+        display:flex;align-items:center;justify-content:space-between;
+        padding:12px 16px;background:var(--c-soft);
+        border-bottom:1px solid var(--c-border);
+        position:sticky;top:0;z-index:10;
       }
       .ao3x-plan h4{
-        margin:0 0 12px;font-size:14px;font-weight:600;
-        color:var(--c-accent);
+        margin:0;font-size:14px;font-weight:600;
+        color:var(--c-accent);flex:1;
+      }
+      .ao3x-plan-toggle{
+        background:none;border:none;color:var(--c-muted);
+        cursor:pointer;font-size:18px;padding:0;margin-left:8px;
+        width:24px;height:24px;display:flex;align-items:center;
+        justify-content:center;border-radius:4px;
+        transition:all .2s;
+      }
+      .ao3x-plan-toggle:hover{
+        background:var(--c-border);color:var(--c-accent);
+      }
+      .ao3x-plan-body{
+        max-height:400px;overflow-y:auto;
+        transition:max-height .3s ease;
+      }
+      .ao3x-plan-body.collapsed{
+        max-height:0;overflow:hidden;
+      }
+      .ao3x-plan-controls{
+        padding:12px 16px;background:white;
+        border-bottom:1px solid var(--c-border);
+        position:sticky;top:0;z-index:9;
+      }
+      .ao3x-plan-rows{
+        padding:0 16px 12px;
       }
       .ao3x-plan .row{
         font-size:12px;color:#4b5563;padding:8px 0;
         border-top:1px solid var(--c-border);
+        display:flex;align-items:center;gap:8px;
       }
       .ao3x-plan .row:first-of-type{border-top:none}
 
@@ -1248,10 +1313,14 @@
       .ao3x-kv{
         display:flex;gap:8px;flex-wrap:wrap;
         font-size:11px;margin-top:12px;
+        overflow:hidden;
+        word-wrap:break-word;
       }
       .ao3x-kv span{
         background:var(--c-soft);padding:4px 8px;
         border-radius:6px;color:var(--c-muted);
+        word-break:break-word;
+        max-width:100%;
       }
 
       /* 块选择控制 */
@@ -1343,18 +1412,14 @@
         border-radius:0 var(--radius) var(--radius) 0;
       }
 
-      /* 调整计划面板行样式以适应复选框 */
-      .ao3x-plan .row{
-        display:flex;align-items:center;font-size:12px;color:#4b5563;
-        padding:6px 0;border-top:1px solid var(--c-border);
-      }
-      .ao3x-plan .row:first-of-type{border-top:none}
       .ao3x-plan .row b{
-        margin-right:8px;
+        flex-shrink:0;
       }
       .ao3x-plan .row .ao3x-jump-btn{
-        margin-right:8px;
-        padding:2px 6px;
+        flex-shrink:0;
+      }
+      .ao3x-plan .row .ao3x-small{
+        color:var(--c-muted);
       }
 
       .ao3x-block-highlight{
@@ -1649,10 +1714,8 @@
     let box = $('#ao3x-plan', c);
     if(!box){ box=document.createElement('div'); box.id='ao3x-plan'; box.className='ao3x-plan'; c.appendChild(box); }
     const rows = plan.map((p,i)=>{
-      const text = stripHtmlToText(p.text||p.html);
-      const head = text.slice(0,48); const tail = text.slice(-48);
       const estIn = p.inTok != null ? p.inTok : 0;
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>块 #${i}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
     const controls = `
       <div class="ao3x-block-controls">
@@ -1662,7 +1725,29 @@
         <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
       </div>
     `;
-    box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${controls}${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
+    box.innerHTML = `
+      <div class="ao3x-plan-header">
+        <h4>翻译计划：共 ${plan.length} 块</h4>
+        <button class="ao3x-plan-toggle" data-action="toggle-plan" title="折叠/展开">▼</button>
+      </div>
+      <div class="ao3x-plan-body">
+        <div class="ao3x-plan-controls">${controls}</div>
+        <div class="ao3x-plan-rows">${rows}</div>
+        <div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>
+      </div>
+    `;
+
+    // 绑定折叠按钮事件
+    const toggleBtn = box.querySelector('[data-action="toggle-plan"]');
+    if(toggleBtn){
+      toggleBtn.addEventListener('click', ()=>{
+        const body = box.querySelector('.ao3x-plan-body');
+        if(body){
+          body.classList.toggle('collapsed');
+          toggleBtn.textContent = body.classList.contains('collapsed') ? '▶' : '▼';
+        }
+      });
+    }
 
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
@@ -2319,6 +2404,8 @@
 
   const RenderState = {
     nextToRender: 0, total: 0, lastApplied: Object.create(null),
+    _pendingUpdates: new Map(), // 批处理待更新的内容
+    _updateScheduled: false,
     setTotal(n){ this.total = n; this.nextToRender = 0; this.lastApplied = Object.create(null); },
     canRender(i){ return i === this.nextToRender; },
     applyIncremental(i, cleanHtml){
@@ -2337,7 +2424,9 @@
 
       // 首次渲染或有占位符时，直接替换全部内容
       if (!prev || hasPlaceholder) {
-        transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
+        // 使用批处理避免频繁的DOM更新
+        this._pendingUpdates.set(i, { transDiv, cleanHtml, mode: 'replace' });
+        this._scheduleUpdate();
         this.lastApplied[i] = cleanHtml;
         return;
       }
@@ -2351,15 +2440,38 @@
       if (cleanHtml.startsWith(prev)) {
         const tail = cleanHtml.slice(prev.length);
         if (tail) {
-          // 直接同步追加，不使用 requestAnimationFrame 以避免时序问题
-          transDiv.insertAdjacentHTML('beforeend', tail);
+          // 批处理追加更新
+          this._pendingUpdates.set(i, { transDiv, tail, mode: 'append' });
+          this._scheduleUpdate();
           this.lastApplied[i] = cleanHtml;
         }
       } else {
         // 内容不连续，全量替换
-        transDiv.innerHTML = cleanHtml;
+        this._pendingUpdates.set(i, { transDiv, cleanHtml, mode: 'replace' });
+        this._scheduleUpdate();
         this.lastApplied[i] = cleanHtml;
       }
+    },
+    _scheduleUpdate(){
+      if (this._updateScheduled) return;
+      this._updateScheduled = true;
+      requestAnimationFrame(() => {
+        this._flushUpdates();
+        this._updateScheduled = false;
+      });
+    },
+    _flushUpdates(){
+      // 批量处理所有待更新的DOM操作，减少reflow
+      for (const [i, update] of this._pendingUpdates.entries()) {
+        const { transDiv, cleanHtml, tail, mode } = update;
+        if (mode === 'replace') {
+          transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
+        } else if (mode === 'append' && tail) {
+          // 使用insertAdjacentHTML而不是innerHTML，性能更好
+          transDiv.insertAdjacentHTML('beforeend', tail);
+        }
+      }
+      this._pendingUpdates.clear();
     },
     finalizeCurrent(){
       // Advance rendering pointer and drain any already-finished chunks in order.
@@ -2866,9 +2978,8 @@
     const c = ensureRenderContainer(); c.innerHTML='';
     const box = document.createElement('div'); box.id='ao3x-plan'; box.className='ao3x-plan'; c.appendChild(box);
     const rows = plan.map((p,i)=>{
-      const text = stripHtmlToText(p.text||p.html);
-      const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+      const estIn = p.inTok != null ? p.inTok : 0;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>块 #${i}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
     const controls = `
       <div class="ao3x-block-controls">
@@ -2878,7 +2989,29 @@
         <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
       </div>
     `;
-    box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${controls}${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
+    box.innerHTML = `
+      <div class="ao3x-plan-header">
+        <h4>翻译计划：共 ${plan.length} 块</h4>
+        <button class="ao3x-plan-toggle" data-action="toggle-plan" title="折叠/展开">▼</button>
+      </div>
+      <div class="ao3x-plan-body">
+        <div class="ao3x-plan-controls">${controls}</div>
+        <div class="ao3x-plan-rows">${rows}</div>
+        <div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>
+      </div>
+    `;
+
+    // 绑定折叠按钮事件
+    const toggleBtn = box.querySelector('[data-action="toggle-plan"]');
+    if(toggleBtn){
+      toggleBtn.addEventListener('click', ()=>{
+        const body = box.querySelector('.ao3x-plan-body');
+        if(body){
+          body.classList.toggle('collapsed');
+          toggleBtn.textContent = body.classList.contains('collapsed') ? '▶' : '▼';
+        }
+      });
+    }
 
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
@@ -2904,12 +3037,11 @@
     // Update plan header count
     const rows = plan.slice(startIndex).map((p,i)=>{
       const idx = startIndex + i;
-      const text = stripHtmlToText(p.text||p.html);
-      const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${idx}" title="跳转到块 #${idx}">📍</button><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+      const estIn = p.inTok != null ? p.inTok : 0;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${idx}" title="跳转到块 #${idx}">📍</button><b>块 #${idx}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
-    const kv = `<div class="ao3x-kv" id="ao3x-kv"></div>`;
-    const headHtml = `<h4>切块计划：共 ${plan.length} 块</h4>`;
+    const kv = `<div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>`;
+    const headHtml = `<h4>翻译计划：共 ${plan.length} 块</h4><button class="ao3x-plan-toggle" data-action="toggle-plan" title="折叠/展开">▼</button>`;
     const controls = `
       <div class="ao3x-block-controls">
         <button id="ao3x-select-all" class="ao3x-btn-mini">全选</button>
@@ -2919,7 +3051,27 @@
       </div>
     `;
     const fixed = Array.from(box.querySelectorAll('.row')).slice(0, startIndex).map(n=>n.outerHTML).join('');
-    box.innerHTML = headHtml + controls + fixed + rows + kv;
+
+    box.innerHTML = `
+      <div class="ao3x-plan-header">${headHtml}</div>
+      <div class="ao3x-plan-body">
+        <div class="ao3x-plan-controls">${controls}</div>
+        <div class="ao3x-plan-rows">${fixed}${rows}</div>
+        ${kv}
+      </div>
+    `;
+
+    // 重新绑定折叠按钮事件
+    const toggleBtn = box.querySelector('[data-action="toggle-plan"]');
+    if(toggleBtn){
+      toggleBtn.addEventListener('click', ()=>{
+        const body = box.querySelector('.ao3x-plan-body');
+        if(body){
+          body.classList.toggle('collapsed');
+          toggleBtn.textContent = body.classList.contains('collapsed') ? '▶' : '▼';
+        }
+      });
+    }
 
     // 重新绑定控制按钮事件
     bindBlockControlEvents(box);
@@ -4385,14 +4537,32 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }
 
       const rows = plan.map((p, i) => {
-        const text = stripHtmlToText(p.text || p.html);
-        const head = text.slice(0, 48);
-        const tail = text.slice(-48);
         const estIn = p.inTok != null ? p.inTok : 0;
-        return `<div class="row"><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
+        return `<div class="row"><b>段落 #${i}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
       }).join('');
 
-      summaryPlanBox.innerHTML = `<h4>总结计划：共 ${plan.length} 段</h4>${rows}<div class="ao3x-kv" id="ao3x-summary-kv"></div>`;
+      summaryPlanBox.innerHTML = `
+        <div class="ao3x-plan-header">
+          <h4>总结计划：共 ${plan.length} 段</h4>
+          <button class="ao3x-plan-toggle" data-action="toggle-summary-plan" title="折叠/展开">▼</button>
+        </div>
+        <div class="ao3x-plan-body">
+          <div class="ao3x-plan-rows">${rows}</div>
+          <div class="ao3x-kv" id="ao3x-summary-kv" style="padding:0 16px 12px;"></div>
+        </div>
+      `;
+
+      // 绑定折叠按钮事件
+      const toggleBtn = summaryPlanBox.querySelector('[data-action="toggle-summary-plan"]');
+      if(toggleBtn){
+        toggleBtn.addEventListener('click', ()=>{
+          const body = summaryPlanBox.querySelector('.ao3x-plan-body');
+          if(body){
+            body.classList.toggle('collapsed');
+            toggleBtn.textContent = body.classList.contains('collapsed') ? '▶' : '▼';
+          }
+        });
+      }
 
       // 2. 创建总结内容容器，放在总结计划之后，翻译计划之前
       let summaryContentContainer = $('#ao3x-summary-content-container', c);
@@ -4720,6 +4890,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     _raf: null,
     _last: 0,
     _accumulated: Object.create(null), // 记录已累积的完整内容，用于去重
+    _batchUpdates: new Map(), // 批处理更新
     push(i, delta, apply) {
       // 确保delta不为空
       if (!delta) return;
@@ -4732,12 +4903,15 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       this._accumulated[i] = this._buf[i];
 
       this._dirty[i] = true;
-      this.schedule((k, clean)=>apply(k, clean));
+      // 收集更新而不是立即触发
+      this._batchUpdates.set(i, { k: i, clean: null, apply });
+      this.schedule();
     },
     done(i, apply) {
       // 标记为脏，触发最终渲染
       this._dirty[i] = true;
-      this.schedule((k, clean)=>apply(k, clean), true);
+      this._batchUpdates.set(i, { k: i, clean: null, apply });
+      this.schedule(true);
     },
     getCleanNow(i){
       const raw = (this._buf && this._buf[i]) || '';
@@ -4750,30 +4924,44 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         this._buf[i] = '';
         this._dirty[i] = false;
         this._accumulated[i] = '';
+        this._batchUpdates.delete(i);
       } else {
         this._buf = Object.create(null);
         this._dirty = Object.create(null);
         this._accumulated = Object.create(null);
+        this._batchUpdates.clear();
       }
     },
-    schedule(apply, force = false) {
+    schedule(force = false) {
       const { minFrameMs } = (typeof settings !== 'undefined' ? settings.get().stream : { minFrameMs: 40 });
       if (this._raf) return;
       const tick = () => {
         this._raf = null;
         const now = performance.now();
-        if (!force && now - this._last < (minFrameMs ?? 40)) { this._raf = requestAnimationFrame(tick); return; }
+        if (!force && now - this._last < (minFrameMs ?? 40)) {
+          this._raf = requestAnimationFrame(tick);
+          return;
+        }
         this._last = now;
 
-        const keys = Object.keys(this._dirty).filter(k => this._dirty[k]);
-        for (const k of keys) {
+        // 批量处理所有更新
+        const updates = Array.from(this._batchUpdates.values());
+        this._batchUpdates.clear();
+
+        // 在同一帧内处理所有DOM更新
+        for (const { k, apply } of updates) {
+          if (!this._dirty[k]) continue;
           const raw = this._buf[k] || '';
           const html = /[<][a-zA-Z]/.test(raw) ? raw : raw.replace(/\n/g, '<br/>');
           const clean = sanitizeHTML(html);
           this._dirty[k] = false;
           apply(Number(k), clean);
         }
-        if (Object.values(this._dirty).some(Boolean)) this._raf = requestAnimationFrame(tick);
+
+        // 如果还有待处理的更新，继续调度
+        if (Object.values(this._dirty).some(Boolean) || this._batchUpdates.size > 0) {
+          this._raf = requestAnimationFrame(tick);
+        }
       };
       this._raf = requestAnimationFrame(tick);
     }
