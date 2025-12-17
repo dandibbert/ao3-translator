@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.8
+// @version      1.1.9
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -77,6 +77,37 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $all = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const trimSlash = (s) => s.replace(/\/+$/, '');
+
+  // GM_xmlhttpRequest 包装器，用于绕过 CORS 限制
+  function gmFetch(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: options.method || 'GET',
+        url: url,
+        headers: options.headers || {},
+        data: options.body,
+        onload: (response) => {
+          // 模拟 fetch API 的 Response 对象
+          const mockResponse = {
+            ok: response.status >= 200 && response.status < 300,
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.responseHeaders,
+            text: async () => response.responseText,
+            json: async () => JSON.parse(response.responseText)
+          };
+          resolve(mockResponse);
+        },
+        onerror: (error) => {
+          reject(new Error('Network request failed'));
+        },
+        ontimeout: () => {
+          reject(new Error('Request timeout'));
+        }
+      });
+    });
+  }
+
   function deepMerge(a,b){ if(!b) return a; const o=Array.isArray(a)?[...a]:{...a}; for(const k in b){ o[k]=(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k]))?deepMerge(a[k]||{},b[k]):b[k]; } return o; }
   function sanitizeHTML(html) {
     const tmp = document.createElement('div'); tmp.innerHTML = html;
@@ -751,7 +782,7 @@
         try {
           UI.toast('正在测试连接...');
           const auth = btoa(`${username}:${password}`);
-          const response = await fetch(url, {
+          const response = await gmFetch(url, {
             method: 'PROPFIND',
             headers: {
               'Authorization': `Basic ${auth}`,
@@ -768,11 +799,7 @@
           }
         } catch (e) {
           console.error('[WebDAV Test] Error:', e);
-          if (e.message.includes('Failed to fetch') || e.name === 'TypeError') {
-            UI.toast('连接失败: 可能是 CORS 问题或网络错误');
-          } else {
-            UI.toast('连接失败: ' + e.message);
-          }
+          UI.toast('连接失败: ' + e.message);
         }
       });
 
@@ -3535,7 +3562,7 @@
 
         UI.toast(`正在上传 ${exportData.totalCaches} 个缓存到 WebDAV...`);
 
-        const response = await fetch(url, {
+        const response = await gmFetch(url, {
           method: 'PUT',
           headers: {
             'Authorization': `Basic ${auth}`,
@@ -3592,7 +3619,7 @@
         const url = trimSlash(config.url);
         const auth = btoa(`${config.username}:${config.password}`);
 
-        const response = await fetch(url, {
+        const response = await gmFetch(url, {
           method: 'PROPFIND',
           headers: {
             'Authorization': `Basic ${auth}`,
@@ -3600,7 +3627,7 @@
           }
         });
 
-        if (!response.ok) {
+        if (!response.ok && response.status !== 207) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
@@ -3683,7 +3710,7 @@
         const url = `${trimSlash(config.url)}/${filename}`;
         const auth = btoa(`${config.username}:${config.password}`);
 
-        const response = await fetch(url, {
+        const response = await gmFetch(url, {
           method: 'GET',
           headers: {
             'Authorization': `Basic ${auth}`
