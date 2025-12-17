@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.6
+// @version      1.1.7
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -92,7 +92,6 @@
   }
   function stripHtmlToText(html){ const div=document.createElement('div'); div.innerHTML=html; return (div.textContent||'').replace(/\s+/g,' ').trim(); }
   function escapeHTML(s){ return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
-  function trimSlash(url) { return url.replace(/\/+$/, ''); }
 
   /* ================= Heuristic Token Estimator (local, no external deps) ================= */
   const TKT = {
