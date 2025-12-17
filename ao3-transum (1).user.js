@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.5
+// @version      1.1.6
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -55,7 +55,8 @@
       },
       watchdog: { idleMs: -1, hardMs: -1, maxRetry: 1 },
       download: { workerUrl: '' },
-      chunkIndicator: { showPreview: false }  // 分块指示器设置
+      chunkIndicator: { showPreview: false },  // 分块指示器设置
+      webdav: { url: '', username: '', password: '' }  // WebDAV 配置
     },
     get() {
       try {
@@ -91,6 +92,7 @@
   }
   function stripHtmlToText(html){ const div=document.createElement('div'); div.innerHTML=html; return (div.textContent||'').replace(/\s+/g,' ').trim(); }
   function escapeHTML(s){ return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+  function trimSlash(url) { return url.replace(/\/+$/, ''); }
 
   /* ================= Heuristic Token Estimator (local, no external deps) ================= */
   const TKT = {
@@ -169,8 +171,22 @@
       btnBatchDownload.style.display = 'none'; // 默认隐藏
       UI._btnBatchDownload = btnBatchDownload; // 保存引用
 
+      // 创建导出缓存按钮
+      const btnExportCache = document.createElement('button');
+      btnExportCache.className = 'ao3x-btn ao3x-floating-btn';
+      btnExportCache.textContent = '💾';
+      btnExportCache.title = '导出翻译缓存为 ZIP';
+
+      // 创建导入缓存按钮
+      const btnImportCache = document.createElement('button');
+      btnImportCache.className = 'ao3x-btn ao3x-floating-btn';
+      btnImportCache.textContent = '📂';
+      btnImportCache.title = '从 ZIP 导入翻译缓存';
+
       floatingMenu.appendChild(btnDownload);
       floatingMenu.appendChild(btnBatchDownload);
+      floatingMenu.appendChild(btnExportCache);
+      floatingMenu.appendChild(btnImportCache);
       floatingMenu.appendChild(btnSummary);
       wrap.appendChild(floatingMenu);
 
@@ -349,6 +365,20 @@
         } else {
           UI.toast('总结功能尚未完全实现');
         }
+        hideFloatingMenu();
+      });
+
+      // 导出缓存按钮事件
+      btnExportCache.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await CacheManager.downloadCacheAsZip();
+        hideFloatingMenu();
+      });
+
+      // 导入缓存按钮事件
+      btnImportCache.addEventListener('click', (e) => {
+        e.stopPropagation();
+        CacheManager.showImportDialog();
         hideFloatingMenu();
       });
 
@@ -584,6 +614,34 @@
               <span class="ao3x-hint">作用域：本脚本使用的翻译缓存（键前缀 ao3_translator_）。</span>
             </div>
           </div>
+
+          <div class="ao3x-section">
+            <h4 class="ao3x-section-title">WebDAV 同步配置</h4>
+            <div class="ao3x-field">
+              <label>WebDAV 地址</label>
+              <input id="ao3x-webdav-url" type="text" placeholder="https://dav.example.com/path"/>
+              <span class="ao3x-hint">WebDAV 服务器地址，用于同步缓存</span>
+            </div>
+            <div class="ao3x-field-group">
+              <div class="ao3x-field">
+                <label>用户名</label>
+                <input id="ao3x-webdav-username" type="text" placeholder="username"/>
+              </div>
+              <div class="ao3x-field">
+                <label>密码</label>
+                <input id="ao3x-webdav-password" type="password" placeholder="password" autocomplete="off"/>
+              </div>
+            </div>
+            <div class="ao3x-field">
+              <label>测试与操作</label>
+              <div class="ao3x-input-group">
+                <button id="ao3x-webdav-test" class="ao3x-btn-secondary">测试连接</button>
+                <button id="ao3x-webdav-upload" class="ao3x-btn-secondary">上传当前缓存</button>
+                <button id="ao3x-webdav-restore" class="ao3x-btn-secondary">从 WebDAV 恢复</button>
+              </div>
+              <span class="ao3x-hint">上传会自动保存当前页面的翻译缓存到 WebDAV</span>
+            </div>
+          </div>
         </div>
       `;
       document.body.appendChild(mask); document.body.appendChild(panel);
@@ -690,6 +748,46 @@
         UI.toast(`清理完成 GM:${removedGM} / LS:${removedLS}`);
       });
 
+      // WebDAV 按钮事件
+      $('#ao3x-webdav-test', panel)?.addEventListener('click', async () => {
+        const url = $('#ao3x-webdav-url', panel).value.trim();
+        const username = $('#ao3x-webdav-username', panel).value.trim();
+        const password = $('#ao3x-webdav-password', panel).value.trim();
+
+        if (!url || !username || !password) {
+          UI.toast('请填写完整的 WebDAV 配置');
+          return;
+        }
+
+        try {
+          UI.toast('正在测试连接...');
+          const auth = btoa(`${username}:${password}`);
+          const response = await fetch(url, {
+            method: 'PROPFIND',
+            headers: {
+              'Authorization': `Basic ${auth}`,
+              'Depth': '0'
+            }
+          });
+
+          if (response.ok) {
+            UI.toast('连接成功！');
+          } else {
+            UI.toast(`连接失败: HTTP ${response.status}`);
+          }
+        } catch (e) {
+          UI.toast('连接失败: ' + e.message);
+        }
+      });
+
+      $('#ao3x-webdav-upload', panel)?.addEventListener('click', async () => {
+        await CacheManager.uploadToWebDAV();
+      });
+
+      $('#ao3x-webdav-restore', panel)?.addEventListener('click', async () => {
+        await CacheManager.restoreFromWebDAV();
+      });
+
       UI._panel = panel; UI._mask = mask; UI.syncPanel();
     },
     openPanel() { UI.syncPanel(); UI._mask.style.display = 'block'; UI._panel.style.display = 'block'; UI.hideFAB(); },
@@ -725,6 +823,10 @@
       $('#ao3x-summary-ratio').value = String(s.summary?.ratioTextToSummary ?? 0.3);
       // 同步分块指示器设置
       $('#ao3x-chunk-preview').checked = !!(s.chunkIndicator?.showPreview);
+      // 同步 WebDAV 配置
+      $('#ao3x-webdav-url').value = s.webdav?.url || '';
+      $('#ao3x-webdav-username').value = s.webdav?.username || '';
+      $('#ao3x-webdav-password').value = s.webdav?.password || '';
     },
     buildToolbar() {
       const bar = document.createElement('div');
@@ -1699,6 +1801,11 @@
       },
       chunkIndicator: {
         showPreview: $('#ao3x-chunk-preview', panel).checked
+      },
+      webdav: {
+        url: ($('#ao3x-webdav-url', panel).value || cur.webdav?.url || '').trim(),
+        username: ($('#ao3x-webdav-username', panel).value || cur.webdav?.username || '').trim(),
+        password: ($('#ao3x-webdav-password', panel).value || cur.webdav?.password || '').trim()
       }
     };
   }
@@ -3229,6 +3336,512 @@
     container.addEventListener('click', container._jumpClickHandler);
     d('bindBlockControlEvents:bound', { containerId: container.id });
   }
+
+  /* ================= Cache Import/Export Module ================= */
+  const CacheManager = {
+    // 导出当前缓存为JSON对象
+    async exportCache() {
+      try {
+        const cacheKey = TransStore._cacheKey;
+        if (!cacheKey) {
+          throw new Error('未找到缓存键');
+        }
+
+        const cacheData = GM_Get(cacheKey);
+        if (!cacheData || !cacheData._map || Object.keys(cacheData._map).length === 0) {
+          throw new Error('没有可导出的缓存数据');
+        }
+
+        const exportData = {
+          version: '1.0',
+          exportTime: new Date().toISOString(),
+          url: window.location.pathname,
+          cache: cacheData
+        };
+
+        return exportData;
+      } catch (e) {
+        console.error('[CacheManager] Export failed:', e);
+        throw e;
+      }
+    },
+
+    // 打包为ZIP并下载
+    async downloadCacheAsZip() {
+      try {
+        UI.toast('正在打包缓存...');
+
+        const exportData = await this.exportCache();
+        const jsonStr = JSON.stringify(exportData, null, 2);
+
+        // 使用内联 JSZip (轻量级实现)
+        const zip = await this.createZip();
+        const filename = this.generateFilename();
+
+        await zip.file(`${filename}.json`, jsonStr);
+
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filename}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        UI.toast('缓存已导出为 ZIP');
+      } catch (e) {
+        console.error('[CacheManager] Download ZIP failed:', e);
+        UI.toast('导出失败：' + e.message);
+      }
+    },
+
+    // 从ZIP文件导入缓存
+    async importCacheFromZip(file) {
+      try {
+        UI.toast('正在导入缓存...');
+
+        const zip = await this.loadZip(file);
+        const files = Object.keys(zip.files);
+
+        if (files.length === 0) {
+          throw new Error('ZIP文件为空');
+        }
+
+        // 查找JSON文件
+        const jsonFile = files.find(f => f.endsWith('.json'));
+        if (!jsonFile) {
+          throw new Error('未找到JSON数据文件');
+        }
+
+        const jsonStr = await zip.files[jsonFile].async('string');
+        const importData = JSON.parse(jsonStr);
+
+        // 验证数据格式
+        if (!importData.version || !importData.cache) {
+          throw new Error('数据格式不正确');
+        }
+
+        // 导入到当前页面
+        const cacheKey = TransStore._cacheKey || `ao3_translator_${window.location.pathname}`;
+        GM_Set(cacheKey, importData.cache);
+
+        // 重新加载缓存
+        TransStore._cacheKey = cacheKey;
+        TransStore.loadFromCache();
+
+        UI.toast('缓存导入成功');
+
+        // 自动刷新页面以应用缓存
+        setTimeout(() => {
+          location.reload();
+        }, 1000);
+
+      } catch (e) {
+        console.error('[CacheManager] Import ZIP failed:', e);
+        UI.toast('导入失败：' + e.message);
+      }
+    },
+
+    // WebDAV 上传
+    async uploadToWebDAV() {
+      try {
+        const s = settings.get();
+        const webdavConfig = s.webdav;
+
+        if (!webdavConfig || !webdavConfig.url || !webdavConfig.username || !webdavConfig.password) {
+          UI.toast('请先配置 WebDAV 设置');
+          return;
+        }
+
+        UI.toast('正在上传到 WebDAV...');
+
+        const exportData = await this.exportCache();
+        const jsonStr = JSON.stringify(exportData, null, 2);
+
+        const filename = this.generateFilename() + '.json';
+        const url = `${trimSlash(webdavConfig.url)}/${filename}`;
+
+        const auth = btoa(`${webdavConfig.username}:${webdavConfig.password}`);
+
+        const response = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/json'
+          },
+          body: jsonStr
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        UI.toast('已上传到 WebDAV');
+
+      } catch (e) {
+        console.error('[CacheManager] WebDAV upload failed:', e);
+        UI.toast('上传失败：' + e.message);
+      }
+    },
+
+    // WebDAV 恢复
+    async restoreFromWebDAV() {
+      try {
+        const s = settings.get();
+        const webdavConfig = s.webdav;
+
+        if (!webdavConfig || !webdavConfig.url || !webdavConfig.username || !webdavConfig.password) {
+          UI.toast('请先配置 WebDAV 设置');
+          return;
+        }
+
+        // 显示文件列表对话框
+        UI.toast('正在获取 WebDAV 文件列表...');
+
+        const files = await this.listWebDAVFiles(webdavConfig);
+
+        if (files.length === 0) {
+          UI.toast('WebDAV 目录为空');
+          return;
+        }
+
+        // 显示文件选择对话框
+        this.showWebDAVFileDialog(files, webdavConfig);
+
+      } catch (e) {
+        console.error('[CacheManager] WebDAV restore failed:', e);
+        UI.toast('获取文件列表失败：' + e.message);
+      }
+    },
+
+    // 列出 WebDAV 文件
+    async listWebDAVFiles(config) {
+      try {
+        const url = trimSlash(config.url);
+        const auth = btoa(`${config.username}:${config.password}`);
+
+        const response = await fetch(url, {
+          method: 'PROPFIND',
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Depth': '1'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const xml = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xml, 'text/xml');
+
+        const files = [];
+        const responses = doc.getElementsByTagName('d:response');
+
+        for (const resp of responses) {
+          const href = resp.getElementsByTagName('d:href')[0]?.textContent;
+          if (href && href.endsWith('.json')) {
+            const filename = href.split('/').pop();
+            files.push({ filename, href });
+          }
+        }
+
+        return files;
+      } catch (e) {
+        console.error('[CacheManager] List WebDAV files failed:', e);
+        throw e;
+      }
+    },
+
+    // 显示 WebDAV 文件选择对话框
+    showWebDAVFileDialog(files, config) {
+      const dialog = document.createElement('div');
+      dialog.className = 'ao3x-chapter-dialog';
+
+      const fileItems = files.map(file => `
+        <label class="ao3x-chapter-item" style="cursor:pointer" data-filename="${escapeHTML(file.filename)}">
+          <span>${escapeHTML(file.filename)}</span>
+        </label>
+      `).join('');
+
+      dialog.innerHTML = `
+        <div class="ao3x-chapter-dialog-content">
+          <div class="ao3x-chapter-dialog-header">
+            <h3>选择要恢复的缓存文件</h3>
+            <button class="ao3x-chapter-dialog-close">×</button>
+          </div>
+          <div class="ao3x-chapter-dialog-body">
+            <div class="ao3x-chapter-list" id="ao3x-webdav-file-list">
+              ${fileItems}
+            </div>
+          </div>
+          <div class="ao3x-chapter-dialog-footer">
+            <button class="ao3x-btn-ghost" id="ao3x-webdav-cancel">取消</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(dialog);
+
+      // 绑定事件
+      dialog.querySelector('.ao3x-chapter-dialog-close').addEventListener('click', () => {
+        dialog.remove();
+      });
+
+      dialog.querySelector('#ao3x-webdav-cancel').addEventListener('click', () => {
+        dialog.remove();
+      });
+
+      // 文件项点击事件
+      dialog.querySelectorAll('.ao3x-chapter-item').forEach(item => {
+        item.addEventListener('click', async () => {
+          const filename = item.getAttribute('data-filename');
+          dialog.remove();
+          await this.downloadFromWebDAV(filename, config);
+        });
+      });
+    },
+
+    // 从 WebDAV 下载文件
+    async downloadFromWebDAV(filename, config) {
+      try {
+        UI.toast('正在下载缓存...');
+
+        const url = `${trimSlash(config.url)}/${filename}`;
+        const auth = btoa(`${config.username}:${config.password}`);
+
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Basic ${auth}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const jsonStr = await response.text();
+        const importData = JSON.parse(jsonStr);
+
+        // 验证数据格式
+        if (!importData.version || !importData.cache) {
+          throw new Error('数据格式不正确');
+        }
+
+        // 导入到当前页面
+        const cacheKey = TransStore._cacheKey || `ao3_translator_${window.location.pathname}`;
+        GM_Set(cacheKey, importData.cache);
+
+        // 重新加载缓存
+        TransStore._cacheKey = cacheKey;
+        TransStore.loadFromCache();
+
+        UI.toast('缓存恢复成功');
+
+        // 自动刷新页面以应用缓存
+        setTimeout(() => {
+          location.reload();
+        }, 1000);
+
+      } catch (e) {
+        console.error('[CacheManager] Download from WebDAV failed:', e);
+        UI.toast('下载失败：' + e.message);
+      }
+    },
+
+    // 生成文件名
+    generateFilename() {
+      const info = Controller.getWorkInfo ? Controller.getWorkInfo() : {};
+      const workTitle = (info && info.workTitle) || 'work';
+      const chapterTitle = (info && info.chapterTitle) || 'chapter';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      return `ao3-cache-${workTitle}-${chapterTitle}-${timestamp}`.replace(/[^\w\-]/g, '_');
+    },
+
+    // 轻量级 ZIP 创建器 (内联实现,避免外部依赖)
+    async createZip() {
+      const files = {};
+
+      return {
+        file(name, content) {
+          files[name] = content;
+          return Promise.resolve();
+        },
+        async generateAsync(options) {
+          // 简单的 ZIP 格式实现
+          const encoder = new TextEncoder();
+          const parts = [];
+
+          let offset = 0;
+          const centralDir = [];
+
+          for (const [filename, content] of Object.entries(files)) {
+            const filenameBytes = encoder.encode(filename);
+            const contentBytes = encoder.encode(content);
+
+            // Local file header
+            const localHeader = new Uint8Array(30 + filenameBytes.length);
+            const view = new DataView(localHeader.buffer);
+
+            view.setUint32(0, 0x04034b50, true); // signature
+            view.setUint16(4, 20, true); // version
+            view.setUint16(6, 0, true); // flags
+            view.setUint16(8, 0, true); // compression (stored)
+            view.setUint16(10, 0, true); // time
+            view.setUint16(12, 0, true); // date
+            view.setUint32(14, 0, true); // crc32 (simplified: 0)
+            view.setUint32(18, contentBytes.length, true); // compressed size
+            view.setUint32(22, contentBytes.length, true); // uncompressed size
+            view.setUint16(26, filenameBytes.length, true); // filename length
+            view.setUint16(28, 0, true); // extra field length
+
+            localHeader.set(filenameBytes, 30);
+
+            parts.push(localHeader, contentBytes);
+
+            // Save for central directory
+            centralDir.push({
+              filename: filenameBytes,
+              offset,
+              size: contentBytes.length
+            });
+
+            offset += localHeader.length + contentBytes.length;
+          }
+
+          // Central directory
+          const centralDirStart = offset;
+          for (const entry of centralDir) {
+            const header = new Uint8Array(46 + entry.filename.length);
+            const view = new DataView(header.buffer);
+
+            view.setUint32(0, 0x02014b50, true); // signature
+            view.setUint16(4, 20, true); // version made by
+            view.setUint16(6, 20, true); // version needed
+            view.setUint16(8, 0, true); // flags
+            view.setUint16(10, 0, true); // compression
+            view.setUint16(12, 0, true); // time
+            view.setUint16(14, 0, true); // date
+            view.setUint32(16, 0, true); // crc32
+            view.setUint32(20, entry.size, true); // compressed size
+            view.setUint32(24, entry.size, true); // uncompressed size
+            view.setUint16(28, entry.filename.length, true); // filename length
+            view.setUint16(30, 0, true); // extra field length
+            view.setUint16(32, 0, true); // comment length
+            view.setUint16(34, 0, true); // disk number
+            view.setUint16(36, 0, true); // internal attributes
+            view.setUint32(38, 0, true); // external attributes
+            view.setUint32(42, entry.offset, true); // relative offset
+
+            header.set(entry.filename, 46);
+
+            parts.push(header);
+            offset += header.length;
+          }
+
+          // End of central directory
+          const endDir = new Uint8Array(22);
+          const viewEnd = new DataView(endDir.buffer);
+          viewEnd.setUint32(0, 0x06054b50, true); // signature
+          viewEnd.setUint16(4, 0, true); // disk number
+          viewEnd.setUint16(6, 0, true); // central dir disk
+          viewEnd.setUint16(8, centralDir.length, true); // entries on this disk
+          viewEnd.setUint16(10, centralDir.length, true); // total entries
+          viewEnd.setUint32(12, offset - centralDirStart, true); // central dir size
+          viewEnd.setUint32(16, centralDirStart, true); // central dir offset
+          viewEnd.setUint16(20, 0, true); // comment length
+
+          parts.push(endDir);
+
+          return new Blob(parts, { type: 'application/zip' });
+        }
+      };
+    },
+
+    // 轻量级 ZIP 解析器
+    async loadZip(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      const decoder = new TextDecoder();
+
+      const files = {};
+
+      // 查找中心目录结束记录
+      let endDirOffset = -1;
+      for (let i = bytes.length - 22; i >= 0; i--) {
+        const view = new DataView(bytes.buffer, i, 4);
+        if (view.getUint32(0, true) === 0x06054b50) {
+          endDirOffset = i;
+          break;
+        }
+      }
+
+      if (endDirOffset === -1) {
+        throw new Error('不是有效的 ZIP 文件');
+      }
+
+      const endDirView = new DataView(bytes.buffer, endDirOffset);
+      const centralDirSize = endDirView.getUint32(12, true);
+      const centralDirOffset = endDirView.getUint32(16, true);
+
+      // 解析中心目录
+      let offset = centralDirOffset;
+      while (offset < centralDirOffset + centralDirSize) {
+        const view = new DataView(bytes.buffer, offset);
+        const sig = view.getUint32(0, true);
+
+        if (sig !== 0x02014b50) break;
+
+        const filenameLength = view.getUint16(28, true);
+        const extraLength = view.getUint16(30, true);
+        const commentLength = view.getUint16(32, true);
+        const localHeaderOffset = view.getUint32(42, true);
+
+        const filenameBytes = bytes.slice(offset + 46, offset + 46 + filenameLength);
+        const filename = decoder.decode(filenameBytes);
+
+        // 读取本地文件头
+        const localView = new DataView(bytes.buffer, localHeaderOffset);
+        const localFilenamelen = localView.getUint16(26, true);
+        const localExtraLen = localView.getUint16(28, true);
+        const compressedSize = localView.getUint32(18, true);
+
+        const dataOffset = localHeaderOffset + 30 + localFilenamelen + localExtraLen;
+        const data = bytes.slice(dataOffset, dataOffset + compressedSize);
+
+        files[filename] = {
+          async(type) {
+            if (type === 'string') {
+              return decoder.decode(data);
+            }
+            return data;
+          }
+        };
+
+        offset += 46 + filenameLength + extraLength + commentLength;
+      }
+
+      return { files };
+    },
+
+    // 显示文件选择对话框
+    showImportDialog() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.zip';
+      input.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          await this.importCacheFromZip(file);
+        }
+      });
+      input.click();
+    }
+  };
 
   /* ================= Controller ================= */
   const Controller = {
