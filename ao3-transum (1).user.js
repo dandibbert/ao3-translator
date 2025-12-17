@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.1
+// @version      1.2.2
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -112,13 +112,7 @@
 
       // 如果有 body/data，添加到请求中
       if (options.body) {
-        // 如果是 ArrayBuffer，需要设置 binary 模式
-        if (options.body instanceof ArrayBuffer) {
-          requestConfig.data = options.body;
-          requestConfig.binary = true;
-        } else {
-          requestConfig.data = options.body;
-        }
+        requestConfig.data = options.body;
       }
 
       GM_xmlhttpRequest(requestConfig);
@@ -680,8 +674,8 @@
             <div class="ao3x-field">
               <label>缓存备份与恢复</label>
               <div class="ao3x-input-group">
-                <button id="ao3x-export-cache-zip" class="ao3x-btn-secondary">💾 导出所有缓存为 ZIP</button>
-                <button id="ao3x-import-cache-zip" class="ao3x-btn-secondary">📂 从 ZIP 导入缓存</button>
+                <button id="ao3x-export-cache-zip" class="ao3x-btn-secondary">💾 导出所有缓存为 JSON</button>
+                <button id="ao3x-import-cache-zip" class="ao3x-btn-secondary">📂 从 JSON 导入缓存</button>
               </div>
               <span class="ao3x-hint">导出/导入所有翻译缓存，便于备份和迁移</span>
             </div>
@@ -3470,99 +3464,59 @@
       }
     },
 
-    // 打包所有缓存为ZIP并下载
+    // 打包所有缓存为 JSON 并下载
     async downloadCacheAsZip() {
       try {
         UI.toast('正在收集所有缓存...');
 
         const exportData = await this.exportAllCaches();
-        const zip = await this.createZip();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const zipFilename = `ao3-caches-${timestamp}`;
+        const filename = `ao3-caches-${timestamp}.json`;
 
-        // 创建 manifest
-        const manifest = {
-          version: exportData.version,
-          exportTime: exportData.exportTime,
-          totalCaches: exportData.totalCaches
-        };
-        await zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+        const jsonStr = JSON.stringify(exportData, null, 2);
+        const fileSizeMB = (jsonStr.length / 1024 / 1024).toFixed(2);
 
-        UI.toast(`正在打包 ${exportData.totalCaches} 个缓存...`);
+        UI.toast(`正在准备下载 ${exportData.totalCaches} 个缓存 (${fileSizeMB} MB)...`);
 
-        // 为每个缓存创建一个文件
-        for (let i = 0; i < exportData.caches.length; i++) {
-          const item = exportData.caches[i];
-          const filename = this.generateCacheFilename(item.url, i);
-          const jsonStr = JSON.stringify({
-            key: item.key,
-            url: item.url,
-            cache: item.cache
-          }, null, 2);
-          await zip.file(filename, jsonStr);
-        }
-
-        UI.toast('正在生成 ZIP 文件...');
-
-        const blob = await zip.generateAsync({ type: 'blob' });
-        downloadBlob(blob, `${zipFilename}.zip`);
+        const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+        downloadBlob(blob, filename);
 
         UI.toast(`成功导出 ${exportData.totalCaches} 个缓存`);
       } catch (e) {
-        console.error('[CacheManager] Download ZIP failed:', e);
+        console.error('[CacheManager] Download failed:', e);
         UI.toast('导出失败：' + e.message);
       }
     },
 
-    // 从ZIP文件导入所有缓存
+    // 从 JSON 文件导入所有缓存
     async importCacheFromZip(file) {
       try {
-        UI.toast('正在读取 ZIP 文件...');
+        UI.toast('正在读取文件...');
 
-        const zip = await this.loadZip(file);
-        const files = Object.keys(zip.files);
+        const jsonStr = await file.text();
+        const importData = JSON.parse(jsonStr);
 
-        if (files.length === 0) {
-          throw new Error('ZIP文件为空');
+        // 验证数据格式
+        if (!importData.version || !importData.caches) {
+          throw new Error('数据格式不正确');
         }
 
-        // 读取 manifest
-        let manifest = null;
-        if (zip.files['manifest.json']) {
-          const manifestStr = await zip.files['manifest.json'].async('string');
-          manifest = JSON.parse(manifestStr);
-        }
-
-        // 查找所有JSON缓存文件
-        const cacheFiles = files.filter(f => f.endsWith('.json') && f !== 'manifest.json');
-
-        if (cacheFiles.length === 0) {
-          throw new Error('未找到缓存数据文件');
-        }
-
-        UI.toast(`找到 ${cacheFiles.length} 个缓存文件，正在导入...`);
+        UI.toast(`找到 ${importData.totalCaches} 个缓存，正在导入...`);
 
         let imported = 0;
         let failed = 0;
 
-        for (const filename of cacheFiles) {
+        for (const item of importData.caches) {
           try {
-            const jsonStr = await zip.files[filename].async('string');
-            const importData = JSON.parse(jsonStr);
-
-            // 验证数据格式
-            if (!importData.key || !importData.cache) {
-              console.warn(`[CacheManager] Invalid cache format: ${filename}`);
+            if (!item.key || !item.cache) {
               failed++;
               continue;
             }
 
-            // 导入缓存
-            GM_Set(importData.key, importData.cache);
+            GM_Set(item.key, item.cache);
             imported++;
-
           } catch (e) {
-            console.error(`[CacheManager] Failed to import ${filename}:`, e);
+            console.error(`[CacheManager] Failed to import cache:`, e);
             failed++;
           }
         }
@@ -3572,14 +3526,7 @@
 
           // 如果当前页面的缓存被更新，刷新页面
           const currentKey = `ao3_translator_${window.location.pathname}`;
-          if (cacheFiles.some(f => {
-            try {
-              const data = JSON.parse(zip.files[f].async('string'));
-              return data.key === currentKey;
-            } catch {
-              return false;
-            }
-          })) {
+          if (importData.caches.some(item => item.key === currentKey)) {
             setTimeout(() => {
               location.reload();
             }, 1000);
@@ -3589,7 +3536,7 @@
         }
 
       } catch (e) {
-        console.error('[CacheManager] Import ZIP failed:', e);
+        console.error('[CacheManager] Import failed:', e);
         UI.toast('导入失败：' + e.message);
       }
     },
@@ -3609,54 +3556,25 @@
 
         const exportData = await this.exportAllCaches();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const zipFilename = `ao3-caches-${timestamp}`;
+        const filename = `ao3-caches-${timestamp}.json`;
 
-        // 创建 ZIP 文件（与本地导出相同）
-        const zip = await this.createZip();
-
-        // 创建 manifest
-        const manifest = {
-          version: exportData.version,
-          exportTime: exportData.exportTime,
-          totalCaches: exportData.totalCaches
-        };
-        await zip.file('manifest.json', JSON.stringify(manifest, null, 2));
-
-        UI.toast(`正在打包 ${exportData.totalCaches} 个缓存...`);
-
-        // 为每个缓存创建一个文件
-        for (let i = 0; i < exportData.caches.length; i++) {
-          const item = exportData.caches[i];
-          const filename = this.generateCacheFilename(item.url, i);
-          const jsonStr = JSON.stringify({
-            key: item.key,
-            url: item.url,
-            cache: item.cache
-          }, null, 2);
-          await zip.file(filename, jsonStr);
-        }
-
-        // 生成 ZIP Blob
-        const blob = await zip.generateAsync({ type: 'blob' });
-        const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
+        const jsonStr = JSON.stringify(exportData, null, 2);
+        const fileSizeMB = (jsonStr.length / 1024 / 1024).toFixed(2);
 
         console.log(`[WebDAV Upload] File size: ${fileSizeMB} MB, ${exportData.totalCaches} caches`);
 
-        const url = `${trimSlash(webdavConfig.url)}/${zipFilename}.zip`;
+        const url = `${trimSlash(webdavConfig.url)}/${filename}`;
         const auth = btoa(`${webdavConfig.username}:${webdavConfig.password}`);
 
         UI.toast(`正在上传 ${exportData.totalCaches} 个缓存 (${fileSizeMB} MB)...`);
-
-        // 将 Blob 转换为 ArrayBuffer 用于上传
-        const arrayBuffer = await blob.arrayBuffer();
 
         const response = await gmFetch(url, {
           method: 'PUT',
           headers: {
             'Authorization': `Basic ${auth}`,
-            'Content-Type': 'application/zip'
+            'Content-Type': 'application/json; charset=utf-8'
           },
-          body: arrayBuffer,
+          body: jsonStr,
           timeout: 180000 // 3分钟超时，适应大文件
         });
 
@@ -3667,7 +3585,7 @@
           throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
 
-        UI.toast(`已上传 ${exportData.totalCaches} 个缓存到 WebDAV (${zipFilename}.zip)`);
+        UI.toast(`已上传 ${exportData.totalCaches} 个缓存到 WebDAV (${filename})`);
 
       } catch (e) {
         console.error('[CacheManager] WebDAV upload failed:', e);
@@ -3732,8 +3650,8 @@
 
         for (const resp of responses) {
           const href = resp.getElementsByTagName('d:href')[0]?.textContent;
-          // 支持 .zip 和 .json 文件
-          if (href && (href.endsWith('.json') || href.endsWith('.zip'))) {
+          // 只支持 .json 文件
+          if (href && href.endsWith('.json')) {
             const filename = href.split('/').pop();
             files.push({ filename, href });
           }
@@ -3817,139 +3735,46 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        // 判断文件类型
-        const isZip = filename.endsWith('.zip');
+        const jsonStr = await response.text();
+        const importData = JSON.parse(jsonStr);
 
-        if (isZip) {
-          // ZIP 格式：需要解析 ZIP
-          UI.toast('正在解析 ZIP 文件...');
+        // 验证数据格式
+        if (!importData.version || !importData.caches) {
+          throw new Error('数据格式不正确');
+        }
 
-          // 对于 ZIP 文件，我们需要获取二进制数据
-          // 但 gmFetch 返回的是文本，所以需要重新获取
-          const zipBlob = await new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-              method: 'GET',
-              url: url,
-              headers: {
-                'Authorization': `Basic ${auth}`
-              },
-              responseType: 'blob',
-              onload: (response) => {
-                resolve(new Blob([response.response], { type: 'application/zip' }));
-              },
-              onerror: () => reject(new Error('下载 ZIP 失败'))
-            });
-          });
+        UI.toast(`找到 ${importData.totalCaches} 个缓存，正在导入...`);
 
-          // 将 Blob 转换为 File 对象
-          const file = new File([zipBlob], filename, { type: 'application/zip' });
+        let imported = 0;
+        let failed = 0;
 
-          // 复用本地 ZIP 导入逻辑
-          const zip = await this.loadZip(file);
-          const files = Object.keys(zip.files);
-
-          if (files.length === 0) {
-            throw new Error('ZIP文件为空');
-          }
-
-          // 查找所有JSON缓存文件
-          const cacheFiles = files.filter(f => f.endsWith('.json') && f !== 'manifest.json');
-
-          if (cacheFiles.length === 0) {
-            throw new Error('未找到缓存数据文件');
-          }
-
-          UI.toast(`找到 ${cacheFiles.length} 个缓存文件，正在导入...`);
-
-          let imported = 0;
-          let failed = 0;
-
-          for (const filename of cacheFiles) {
-            try {
-              const jsonStr = await zip.files[filename].async('string');
-              const importData = JSON.parse(jsonStr);
-
-              // 验证数据格式
-              if (!importData.key || !importData.cache) {
-                console.warn(`[CacheManager] Invalid cache format: ${filename}`);
-                failed++;
-                continue;
-              }
-
-              // 导入缓存
-              GM_Set(importData.key, importData.cache);
-              imported++;
-
-            } catch (e) {
-              console.error(`[CacheManager] Failed to import ${filename}:`, e);
+        for (const item of importData.caches) {
+          try {
+            if (!item.key || !item.cache) {
               failed++;
+              continue;
             }
+
+            GM_Set(item.key, item.cache);
+            imported++;
+          } catch (e) {
+            console.error(`[CacheManager] Failed to import cache:`, e);
+            failed++;
           }
+        }
 
-          if (imported > 0) {
-            UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
+        if (imported > 0) {
+          UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
 
-            // 如果当前页面的缓存被更新，刷新页面
-            const currentKey = `ao3_translator_${window.location.pathname}`;
-            for (const f of cacheFiles) {
-              try {
-                const jsonStr = await zip.files[f].async('string');
-                const data = JSON.parse(jsonStr);
-                if (data.key === currentKey) {
-                  setTimeout(() => {
-                    location.reload();
-                  }, 1000);
-                  break;
-                }
-              } catch {}
-            }
-          } else {
-            throw new Error('没有成功导入任何缓存');
+          // 如果当前页面的缓存被更新，刷新页面
+          const currentKey = `ao3_translator_${window.location.pathname}`;
+          if (importData.caches.some(item => item.key === currentKey)) {
+            setTimeout(() => {
+              location.reload();
+            }, 1000);
           }
-
         } else {
-          // JSON 格式（向后兼容旧文件）
-          const jsonStr = await response.text();
-          const importData = JSON.parse(jsonStr);
-
-          // 验证数据格式
-          if (!importData.version || !importData.caches) {
-            throw new Error('数据格式不正确');
-          }
-
-          UI.toast(`找到 ${importData.totalCaches} 个缓存，正在导入...`);
-
-          let imported = 0;
-          let failed = 0;
-
-          for (const item of importData.caches) {
-            try {
-              if (!item.key || !item.cache) {
-                failed++;
-                continue;
-              }
-
-              GM_Set(item.key, item.cache);
-              imported++;
-            } catch (e) {
-              console.error(`[CacheManager] Failed to import cache:`, e);
-              failed++;
-            }
-          }
-
-          if (imported > 0) {
-            UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
-
-            // 如果当前页面的缓存被更新，刷新页面
-            const currentKey = `ao3_translator_${window.location.pathname}`;
-            if (importData.caches.some(item => item.key === currentKey)) {
-              setTimeout(() => {
-                location.reload();
-              }, 1000);
-            }
-          } else {
-            throw new Error('没有成功导入任何缓存');
-          }
+          throw new Error('没有成功导入任何缓存');
         }
 
       } catch (e) {
@@ -3958,185 +3783,11 @@
       }
     },
 
-    // 生成缓存文件名
-    generateCacheFilename(url, index) {
-      // 将 URL 转换为安全的文件名
-      // 例如: /works/12345/chapters/67890 -> works_12345_chapters_67890.json
-      const safeName = url.replace(/^\//, '').replace(/\//g, '_').replace(/[^\w\-]/g, '_');
-      return `cache_${index}_${safeName}.json`;
-    },
-
-    // 轻量级 ZIP 创建器 (内联实现,避免外部依赖)
-    async createZip() {
-      const files = {};
-
-      return {
-        file(name, content) {
-          files[name] = content;
-          return Promise.resolve();
-        },
-        async generateAsync(options) {
-          // 简单的 ZIP 格式实现
-          const encoder = new TextEncoder();
-          const parts = [];
-
-          let offset = 0;
-          const centralDir = [];
-
-          for (const [filename, content] of Object.entries(files)) {
-            const filenameBytes = encoder.encode(filename);
-            const contentBytes = encoder.encode(content);
-
-            // Local file header
-            const localHeader = new Uint8Array(30 + filenameBytes.length);
-            const view = new DataView(localHeader.buffer);
-
-            view.setUint32(0, 0x04034b50, true); // signature
-            view.setUint16(4, 20, true); // version
-            view.setUint16(6, 0, true); // flags
-            view.setUint16(8, 0, true); // compression (stored)
-            view.setUint16(10, 0, true); // time
-            view.setUint16(12, 0, true); // date
-            view.setUint32(14, 0, true); // crc32 (simplified: 0)
-            view.setUint32(18, contentBytes.length, true); // compressed size
-            view.setUint32(22, contentBytes.length, true); // uncompressed size
-            view.setUint16(26, filenameBytes.length, true); // filename length
-            view.setUint16(28, 0, true); // extra field length
-
-            localHeader.set(filenameBytes, 30);
-
-            parts.push(localHeader, contentBytes);
-
-            // Save for central directory
-            centralDir.push({
-              filename: filenameBytes,
-              offset,
-              size: contentBytes.length
-            });
-
-            offset += localHeader.length + contentBytes.length;
-          }
-
-          // Central directory
-          const centralDirStart = offset;
-          for (const entry of centralDir) {
-            const header = new Uint8Array(46 + entry.filename.length);
-            const view = new DataView(header.buffer);
-
-            view.setUint32(0, 0x02014b50, true); // signature
-            view.setUint16(4, 20, true); // version made by
-            view.setUint16(6, 20, true); // version needed
-            view.setUint16(8, 0, true); // flags
-            view.setUint16(10, 0, true); // compression
-            view.setUint16(12, 0, true); // time
-            view.setUint16(14, 0, true); // date
-            view.setUint32(16, 0, true); // crc32
-            view.setUint32(20, entry.size, true); // compressed size
-            view.setUint32(24, entry.size, true); // uncompressed size
-            view.setUint16(28, entry.filename.length, true); // filename length
-            view.setUint16(30, 0, true); // extra field length
-            view.setUint16(32, 0, true); // comment length
-            view.setUint16(34, 0, true); // disk number
-            view.setUint16(36, 0, true); // internal attributes
-            view.setUint32(38, 0, true); // external attributes
-            view.setUint32(42, entry.offset, true); // relative offset
-
-            header.set(entry.filename, 46);
-
-            parts.push(header);
-            offset += header.length;
-          }
-
-          // End of central directory
-          const endDir = new Uint8Array(22);
-          const viewEnd = new DataView(endDir.buffer);
-          viewEnd.setUint32(0, 0x06054b50, true); // signature
-          viewEnd.setUint16(4, 0, true); // disk number
-          viewEnd.setUint16(6, 0, true); // central dir disk
-          viewEnd.setUint16(8, centralDir.length, true); // entries on this disk
-          viewEnd.setUint16(10, centralDir.length, true); // total entries
-          viewEnd.setUint32(12, offset - centralDirStart, true); // central dir size
-          viewEnd.setUint32(16, centralDirStart, true); // central dir offset
-          viewEnd.setUint16(20, 0, true); // comment length
-
-          parts.push(endDir);
-
-          return new Blob(parts, { type: 'application/zip' });
-        }
-      };
-    },
-
-    // 轻量级 ZIP 解析器
-    async loadZip(file) {
-      const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      const decoder = new TextDecoder();
-
-      const files = {};
-
-      // 查找中心目录结束记录
-      let endDirOffset = -1;
-      for (let i = bytes.length - 22; i >= 0; i--) {
-        const view = new DataView(bytes.buffer, i, 4);
-        if (view.getUint32(0, true) === 0x06054b50) {
-          endDirOffset = i;
-          break;
-        }
-      }
-
-      if (endDirOffset === -1) {
-        throw new Error('不是有效的 ZIP 文件');
-      }
-
-      const endDirView = new DataView(bytes.buffer, endDirOffset);
-      const centralDirSize = endDirView.getUint32(12, true);
-      const centralDirOffset = endDirView.getUint32(16, true);
-
-      // 解析中心目录
-      let offset = centralDirOffset;
-      while (offset < centralDirOffset + centralDirSize) {
-        const view = new DataView(bytes.buffer, offset);
-        const sig = view.getUint32(0, true);
-
-        if (sig !== 0x02014b50) break;
-
-        const filenameLength = view.getUint16(28, true);
-        const extraLength = view.getUint16(30, true);
-        const commentLength = view.getUint16(32, true);
-        const localHeaderOffset = view.getUint32(42, true);
-
-        const filenameBytes = bytes.slice(offset + 46, offset + 46 + filenameLength);
-        const filename = decoder.decode(filenameBytes);
-
-        // 读取本地文件头
-        const localView = new DataView(bytes.buffer, localHeaderOffset);
-        const localFilenamelen = localView.getUint16(26, true);
-        const localExtraLen = localView.getUint16(28, true);
-        const compressedSize = localView.getUint32(18, true);
-
-        const dataOffset = localHeaderOffset + 30 + localFilenamelen + localExtraLen;
-        const data = bytes.slice(dataOffset, dataOffset + compressedSize);
-
-        files[filename] = {
-          async(type) {
-            if (type === 'string') {
-              return decoder.decode(data);
-            }
-            return data;
-          }
-        };
-
-        offset += 46 + filenameLength + extraLength + commentLength;
-      }
-
-      return { files };
-    },
-
     // 显示文件选择对话框
     showImportDialog() {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.zip';
+      input.accept = '.json,application/json';
       input.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (file) {
