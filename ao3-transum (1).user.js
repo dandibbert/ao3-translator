@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.0
+// @version      1.2.1
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -112,11 +112,62 @@
 
       // 如果有 body/data，添加到请求中
       if (options.body) {
-        requestConfig.data = options.body;
+        // 如果是 ArrayBuffer，需要设置 binary 模式
+        if (options.body instanceof ArrayBuffer) {
+          requestConfig.data = options.body;
+          requestConfig.binary = true;
+        } else {
+          requestConfig.data = options.body;
+        }
       }
 
       GM_xmlhttpRequest(requestConfig);
     });
+  }
+
+  // Safari 兼容的下载函数
+  function downloadBlob(blob, filename) {
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isSafari) {
+      // Safari 特殊处理
+      const reader = new FileReader();
+      reader.onload = function() {
+        const link = document.createElement('a');
+        link.href = reader.result;
+        link.download = filename;
+        link.style.display = 'none';
+
+        // Safari 需要将链接添加到 DOM 并模拟用户点击
+        document.body.appendChild(link);
+
+        // 使用 setTimeout 确保 DOM 更新
+        setTimeout(() => {
+          link.click();
+
+          // 清理
+          setTimeout(() => {
+            document.body.removeChild(link);
+          }, 100);
+        }, 0);
+      };
+      reader.readAsDataURL(blob);
+    } else {
+      // Chrome/Firefox 标准方法
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+
+      // 清理
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    }
   }
 
   function deepMerge(a,b){ if(!b) return a; const o=Array.isArray(a)?[...a]:{...a}; for(const k in b){ o[k]=(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k]))?deepMerge(a[k]||{},b[k]):b[k]; } return o; }
@@ -3454,14 +3505,7 @@
         UI.toast('正在生成 ZIP 文件...');
 
         const blob = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${zipFilename}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, `${zipFilename}.zip`);
 
         UI.toast(`成功导出 ${exportData.totalCaches} 个缓存`);
       } catch (e) {
@@ -3565,26 +3609,55 @@
 
         const exportData = await this.exportAllCaches();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `ao3-caches-${timestamp}.json`;
+        const zipFilename = `ao3-caches-${timestamp}`;
 
-        const jsonStr = JSON.stringify(exportData, null, 2);
-        const fileSizeMB = (jsonStr.length / 1024 / 1024).toFixed(2);
+        // 创建 ZIP 文件（与本地导出相同）
+        const zip = await this.createZip();
+
+        // 创建 manifest
+        const manifest = {
+          version: exportData.version,
+          exportTime: exportData.exportTime,
+          totalCaches: exportData.totalCaches
+        };
+        await zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+        UI.toast(`正在打包 ${exportData.totalCaches} 个缓存...`);
+
+        // 为每个缓存创建一个文件
+        for (let i = 0; i < exportData.caches.length; i++) {
+          const item = exportData.caches[i];
+          const filename = this.generateCacheFilename(item.url, i);
+          const jsonStr = JSON.stringify({
+            key: item.key,
+            url: item.url,
+            cache: item.cache
+          }, null, 2);
+          await zip.file(filename, jsonStr);
+        }
+
+        // 生成 ZIP Blob
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
 
         console.log(`[WebDAV Upload] File size: ${fileSizeMB} MB, ${exportData.totalCaches} caches`);
 
-        const url = `${trimSlash(webdavConfig.url)}/${filename}`;
+        const url = `${trimSlash(webdavConfig.url)}/${zipFilename}.zip`;
         const auth = btoa(`${webdavConfig.username}:${webdavConfig.password}`);
 
         UI.toast(`正在上传 ${exportData.totalCaches} 个缓存 (${fileSizeMB} MB)...`);
+
+        // 将 Blob 转换为 ArrayBuffer 用于上传
+        const arrayBuffer = await blob.arrayBuffer();
 
         const response = await gmFetch(url, {
           method: 'PUT',
           headers: {
             'Authorization': `Basic ${auth}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/zip'
           },
-          body: jsonStr,
-          timeout: 120000 // 2分钟超时，适应大文件
+          body: arrayBuffer,
+          timeout: 180000 // 3分钟超时，适应大文件
         });
 
         console.log(`[WebDAV Upload] Response status: ${response.status}`);
@@ -3594,7 +3667,7 @@
           throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
 
-        UI.toast(`已上传 ${exportData.totalCaches} 个缓存到 WebDAV`);
+        UI.toast(`已上传 ${exportData.totalCaches} 个缓存到 WebDAV (${zipFilename}.zip)`);
 
       } catch (e) {
         console.error('[CacheManager] WebDAV upload failed:', e);
@@ -3659,11 +3732,15 @@
 
         for (const resp of responses) {
           const href = resp.getElementsByTagName('d:href')[0]?.textContent;
-          if (href && href.endsWith('.json')) {
+          // 支持 .zip 和 .json 文件
+          if (href && (href.endsWith('.json') || href.endsWith('.zip'))) {
             const filename = href.split('/').pop();
             files.push({ filename, href });
           }
         }
+
+        // 按时间排序（最新的在前）
+        files.sort((a, b) => b.filename.localeCompare(a.filename));
 
         return files;
       } catch (e) {
@@ -3740,46 +3817,139 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const jsonStr = await response.text();
-        const importData = JSON.parse(jsonStr);
+        // 判断文件类型
+        const isZip = filename.endsWith('.zip');
 
-        // 验证数据格式
-        if (!importData.version || !importData.caches) {
-          throw new Error('数据格式不正确');
-        }
+        if (isZip) {
+          // ZIP 格式：需要解析 ZIP
+          UI.toast('正在解析 ZIP 文件...');
 
-        UI.toast(`找到 ${importData.totalCaches} 个缓存，正在导入...`);
+          // 对于 ZIP 文件，我们需要获取二进制数据
+          // 但 gmFetch 返回的是文本，所以需要重新获取
+          const zipBlob = await new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+              method: 'GET',
+              url: url,
+              headers: {
+                'Authorization': `Basic ${auth}`
+              },
+              responseType: 'blob',
+              onload: (response) => {
+                resolve(new Blob([response.response], { type: 'application/zip' }));
+              },
+              onerror: () => reject(new Error('下载 ZIP 失败'))
+            });
+          });
 
-        let imported = 0;
-        let failed = 0;
+          // 将 Blob 转换为 File 对象
+          const file = new File([zipBlob], filename, { type: 'application/zip' });
 
-        for (const item of importData.caches) {
-          try {
-            if (!item.key || !item.cache) {
+          // 复用本地 ZIP 导入逻辑
+          const zip = await this.loadZip(file);
+          const files = Object.keys(zip.files);
+
+          if (files.length === 0) {
+            throw new Error('ZIP文件为空');
+          }
+
+          // 查找所有JSON缓存文件
+          const cacheFiles = files.filter(f => f.endsWith('.json') && f !== 'manifest.json');
+
+          if (cacheFiles.length === 0) {
+            throw new Error('未找到缓存数据文件');
+          }
+
+          UI.toast(`找到 ${cacheFiles.length} 个缓存文件，正在导入...`);
+
+          let imported = 0;
+          let failed = 0;
+
+          for (const filename of cacheFiles) {
+            try {
+              const jsonStr = await zip.files[filename].async('string');
+              const importData = JSON.parse(jsonStr);
+
+              // 验证数据格式
+              if (!importData.key || !importData.cache) {
+                console.warn(`[CacheManager] Invalid cache format: ${filename}`);
+                failed++;
+                continue;
+              }
+
+              // 导入缓存
+              GM_Set(importData.key, importData.cache);
+              imported++;
+
+            } catch (e) {
+              console.error(`[CacheManager] Failed to import ${filename}:`, e);
               failed++;
-              continue;
             }
-
-            GM_Set(item.key, item.cache);
-            imported++;
-          } catch (e) {
-            console.error(`[CacheManager] Failed to import cache:`, e);
-            failed++;
           }
-        }
 
-        if (imported > 0) {
-          UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
+          if (imported > 0) {
+            UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
 
-          // 如果当前页面的缓存被更新，刷新页面
-          const currentKey = `ao3_translator_${window.location.pathname}`;
-          if (importData.caches.some(item => item.key === currentKey)) {
-            setTimeout(() => {
-              location.reload();
-            }, 1000);
+            // 如果当前页面的缓存被更新，刷新页面
+            const currentKey = `ao3_translator_${window.location.pathname}`;
+            for (const f of cacheFiles) {
+              try {
+                const jsonStr = await zip.files[f].async('string');
+                const data = JSON.parse(jsonStr);
+                if (data.key === currentKey) {
+                  setTimeout(() => {
+                    location.reload();
+                  }, 1000);
+                  break;
+                }
+              } catch {}
+            }
+          } else {
+            throw new Error('没有成功导入任何缓存');
           }
+
         } else {
-          throw new Error('没有成功导入任何缓存');
+          // JSON 格式（向后兼容旧文件）
+          const jsonStr = await response.text();
+          const importData = JSON.parse(jsonStr);
+
+          // 验证数据格式
+          if (!importData.version || !importData.caches) {
+            throw new Error('数据格式不正确');
+          }
+
+          UI.toast(`找到 ${importData.totalCaches} 个缓存，正在导入...`);
+
+          let imported = 0;
+          let failed = 0;
+
+          for (const item of importData.caches) {
+            try {
+              if (!item.key || !item.cache) {
+                failed++;
+                continue;
+              }
+
+              GM_Set(item.key, item.cache);
+              imported++;
+            } catch (e) {
+              console.error(`[CacheManager] Failed to import cache:`, e);
+              failed++;
+            }
+          }
+
+          if (imported > 0) {
+            UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
+
+            // 如果当前页面的缓存被更新，刷新页面
+            const currentKey = `ao3_translator_${window.location.pathname}`;
+            if (importData.caches.some(item => item.key === currentKey)) {
+              setTimeout(() => {
+                location.reload();
+              }, 1000);
+            }
+          } else {
+            throw new Error('没有成功导入任何缓存');
+          }
         }
 
       } catch (e) {
@@ -4221,14 +4391,7 @@
           location.href = data.url;
         } else {
           const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
+          downloadBlob(blob, fileName);
           UI.toast(`已下载 ${fileName}`);
         }
         
@@ -4336,17 +4499,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     return; // 重要：不要再继续走到 Blob 分支
   }
 
-  // 5) 其他浏览器：保留原来的 Blob 下载
+  // 5) 其他浏览器：使用 Safari 兼容的下载
   try {
     const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, fileName);
     UI.toast(`已下载 ${fileName}`);
   } catch (e) {
     UI.toast('本地下载失败：' + (e && e.message ? e.message : String(e)));
