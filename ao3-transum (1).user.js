@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.7
+// @version      1.1.8
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -170,22 +170,8 @@
       btnBatchDownload.style.display = 'none'; // 默认隐藏
       UI._btnBatchDownload = btnBatchDownload; // 保存引用
 
-      // 创建导出缓存按钮
-      const btnExportCache = document.createElement('button');
-      btnExportCache.className = 'ao3x-btn ao3x-floating-btn';
-      btnExportCache.textContent = '💾';
-      btnExportCache.title = '导出翻译缓存为 ZIP';
-
-      // 创建导入缓存按钮
-      const btnImportCache = document.createElement('button');
-      btnImportCache.className = 'ao3x-btn ao3x-floating-btn';
-      btnImportCache.textContent = '📂';
-      btnImportCache.title = '从 ZIP 导入翻译缓存';
-
       floatingMenu.appendChild(btnDownload);
       floatingMenu.appendChild(btnBatchDownload);
-      floatingMenu.appendChild(btnExportCache);
-      floatingMenu.appendChild(btnImportCache);
       floatingMenu.appendChild(btnSummary);
       wrap.appendChild(floatingMenu);
 
@@ -364,20 +350,6 @@
         } else {
           UI.toast('总结功能尚未完全实现');
         }
-        hideFloatingMenu();
-      });
-
-      // 导出缓存按钮事件
-      btnExportCache.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await CacheManager.downloadCacheAsZip();
-        hideFloatingMenu();
-      });
-
-      // 导入缓存按钮事件
-      btnImportCache.addEventListener('click', (e) => {
-        e.stopPropagation();
-        CacheManager.showImportDialog();
         hideFloatingMenu();
       });
 
@@ -612,6 +584,14 @@
               </div>
               <span class="ao3x-hint">作用域：本脚本使用的翻译缓存（键前缀 ao3_translator_）。</span>
             </div>
+            <div class="ao3x-field">
+              <label>缓存备份与恢复</label>
+              <div class="ao3x-input-group">
+                <button id="ao3x-export-cache-zip" class="ao3x-btn-secondary">💾 导出所有缓存为 ZIP</button>
+                <button id="ao3x-import-cache-zip" class="ao3x-btn-secondary">📂 从 ZIP 导入缓存</button>
+              </div>
+              <span class="ao3x-hint">导出/导入所有翻译缓存，便于备份和迁移</span>
+            </div>
           </div>
 
           <div class="ao3x-section">
@@ -747,6 +727,16 @@
         UI.toast(`清理完成 GM:${removedGM} / LS:${removedLS}`);
       });
 
+      // 导出所有缓存为 ZIP
+      $('#ao3x-export-cache-zip', panel)?.addEventListener('click', async () => {
+        await CacheManager.downloadCacheAsZip();
+      });
+
+      // 从 ZIP 导入缓存
+      $('#ao3x-import-cache-zip', panel)?.addEventListener('click', () => {
+        CacheManager.showImportDialog();
+      });
+
       // WebDAV 按钮事件
       $('#ao3x-webdav-test', panel)?.addEventListener('click', async () => {
         const url = $('#ao3x-webdav-url', panel).value.trim();
@@ -769,13 +759,20 @@
             }
           });
 
-          if (response.ok) {
+          if (response.ok || response.status === 207) {
             UI.toast('连接成功！');
+          } else if (response.status === 401) {
+            UI.toast('认证失败: 用户名或密码错误');
           } else {
             UI.toast(`连接失败: HTTP ${response.status}`);
           }
         } catch (e) {
-          UI.toast('连接失败: ' + e.message);
+          console.error('[WebDAV Test] Error:', e);
+          if (e.message.includes('Failed to fetch') || e.name === 'TypeError') {
+            UI.toast('连接失败: 可能是 CORS 问题或网络错误');
+          } else {
+            UI.toast('连接失败: ' + e.message);
+          }
         }
       });
 
@@ -3338,24 +3335,43 @@
 
   /* ================= Cache Import/Export Module ================= */
   const CacheManager = {
-    // 导出当前缓存为JSON对象
-    async exportCache() {
-      try {
-        const cacheKey = TransStore._cacheKey;
-        if (!cacheKey) {
-          throw new Error('未找到缓存键');
-        }
+    // 获取所有翻译缓存
+    getAllCaches() {
+      const gmKeys = GM_ListKeys().filter(k => typeof k === 'string' && k.startsWith('ao3_translator_'));
+      const caches = [];
 
-        const cacheData = GM_Get(cacheKey);
-        if (!cacheData || !cacheData._map || Object.keys(cacheData._map).length === 0) {
+      for (const key of gmKeys) {
+        try {
+          const cacheData = GM_Get(key);
+          if (cacheData && cacheData._map && Object.keys(cacheData._map).length > 0) {
+            caches.push({ key, cache: cacheData });
+          }
+        } catch (e) {
+          console.warn(`[CacheManager] Failed to read cache: ${key}`, e);
+        }
+      }
+
+      return caches;
+    },
+
+    // 导出所有缓存为JSON对象数组
+    async exportAllCaches() {
+      try {
+        const caches = this.getAllCaches();
+
+        if (caches.length === 0) {
           throw new Error('没有可导出的缓存数据');
         }
 
         const exportData = {
           version: '1.0',
           exportTime: new Date().toISOString(),
-          url: window.location.pathname,
-          cache: cacheData
+          totalCaches: caches.length,
+          caches: caches.map(item => ({
+            key: item.key,
+            url: item.key.replace('ao3_translator_', ''),
+            cache: item.cache
+          }))
         };
 
         return exportData;
@@ -3365,41 +3381,61 @@
       }
     },
 
-    // 打包为ZIP并下载
+    // 打包所有缓存为ZIP并下载
     async downloadCacheAsZip() {
       try {
-        UI.toast('正在打包缓存...');
+        UI.toast('正在收集所有缓存...');
 
-        const exportData = await this.exportCache();
-        const jsonStr = JSON.stringify(exportData, null, 2);
-
-        // 使用内联 JSZip (轻量级实现)
+        const exportData = await this.exportAllCaches();
         const zip = await this.createZip();
-        const filename = this.generateFilename();
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const zipFilename = `ao3-caches-${timestamp}`;
 
-        await zip.file(`${filename}.json`, jsonStr);
+        // 创建 manifest
+        const manifest = {
+          version: exportData.version,
+          exportTime: exportData.exportTime,
+          totalCaches: exportData.totalCaches
+        };
+        await zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+        UI.toast(`正在打包 ${exportData.totalCaches} 个缓存...`);
+
+        // 为每个缓存创建一个文件
+        for (let i = 0; i < exportData.caches.length; i++) {
+          const item = exportData.caches[i];
+          const filename = this.generateCacheFilename(item.url, i);
+          const jsonStr = JSON.stringify({
+            key: item.key,
+            url: item.url,
+            cache: item.cache
+          }, null, 2);
+          await zip.file(filename, jsonStr);
+        }
+
+        UI.toast('正在生成 ZIP 文件...');
 
         const blob = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${filename}.zip`;
+        a.download = `${zipFilename}.zip`;
         document.body.appendChild(a);
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
 
-        UI.toast('缓存已导出为 ZIP');
+        UI.toast(`成功导出 ${exportData.totalCaches} 个缓存`);
       } catch (e) {
         console.error('[CacheManager] Download ZIP failed:', e);
         UI.toast('导出失败：' + e.message);
       }
     },
 
-    // 从ZIP文件导入缓存
+    // 从ZIP文件导入所有缓存
     async importCacheFromZip(file) {
       try {
-        UI.toast('正在导入缓存...');
+        UI.toast('正在读取 ZIP 文件...');
 
         const zip = await this.loadZip(file);
         const files = Object.keys(zip.files);
@@ -3408,34 +3444,67 @@
           throw new Error('ZIP文件为空');
         }
 
-        // 查找JSON文件
-        const jsonFile = files.find(f => f.endsWith('.json'));
-        if (!jsonFile) {
-          throw new Error('未找到JSON数据文件');
+        // 读取 manifest
+        let manifest = null;
+        if (zip.files['manifest.json']) {
+          const manifestStr = await zip.files['manifest.json'].async('string');
+          manifest = JSON.parse(manifestStr);
         }
 
-        const jsonStr = await zip.files[jsonFile].async('string');
-        const importData = JSON.parse(jsonStr);
+        // 查找所有JSON缓存文件
+        const cacheFiles = files.filter(f => f.endsWith('.json') && f !== 'manifest.json');
 
-        // 验证数据格式
-        if (!importData.version || !importData.cache) {
-          throw new Error('数据格式不正确');
+        if (cacheFiles.length === 0) {
+          throw new Error('未找到缓存数据文件');
         }
 
-        // 导入到当前页面
-        const cacheKey = TransStore._cacheKey || `ao3_translator_${window.location.pathname}`;
-        GM_Set(cacheKey, importData.cache);
+        UI.toast(`找到 ${cacheFiles.length} 个缓存文件，正在导入...`);
 
-        // 重新加载缓存
-        TransStore._cacheKey = cacheKey;
-        TransStore.loadFromCache();
+        let imported = 0;
+        let failed = 0;
 
-        UI.toast('缓存导入成功');
+        for (const filename of cacheFiles) {
+          try {
+            const jsonStr = await zip.files[filename].async('string');
+            const importData = JSON.parse(jsonStr);
 
-        // 自动刷新页面以应用缓存
-        setTimeout(() => {
-          location.reload();
-        }, 1000);
+            // 验证数据格式
+            if (!importData.key || !importData.cache) {
+              console.warn(`[CacheManager] Invalid cache format: ${filename}`);
+              failed++;
+              continue;
+            }
+
+            // 导入缓存
+            GM_Set(importData.key, importData.cache);
+            imported++;
+
+          } catch (e) {
+            console.error(`[CacheManager] Failed to import ${filename}:`, e);
+            failed++;
+          }
+        }
+
+        if (imported > 0) {
+          UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
+
+          // 如果当前页面的缓存被更新，刷新页面
+          const currentKey = `ao3_translator_${window.location.pathname}`;
+          if (cacheFiles.some(f => {
+            try {
+              const data = JSON.parse(zip.files[f].async('string'));
+              return data.key === currentKey;
+            } catch {
+              return false;
+            }
+          })) {
+            setTimeout(() => {
+              location.reload();
+            }, 1000);
+          }
+        } else {
+          throw new Error('没有成功导入任何缓存');
+        }
 
       } catch (e) {
         console.error('[CacheManager] Import ZIP failed:', e);
@@ -3454,15 +3523,17 @@
           return;
         }
 
-        UI.toast('正在上传到 WebDAV...');
+        UI.toast('正在准备上传...');
 
-        const exportData = await this.exportCache();
+        const exportData = await this.exportAllCaches();
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const filename = `ao3-caches-${timestamp}.json`;
+
         const jsonStr = JSON.stringify(exportData, null, 2);
-
-        const filename = this.generateFilename() + '.json';
         const url = `${trimSlash(webdavConfig.url)}/${filename}`;
-
         const auth = btoa(`${webdavConfig.username}:${webdavConfig.password}`);
+
+        UI.toast(`正在上传 ${exportData.totalCaches} 个缓存到 WebDAV...`);
 
         const response = await fetch(url, {
           method: 'PUT',
@@ -3477,7 +3548,7 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        UI.toast('已上传到 WebDAV');
+        UI.toast(`已上传 ${exportData.totalCaches} 个缓存到 WebDAV`);
 
       } catch (e) {
         console.error('[CacheManager] WebDAV upload failed:', e);
@@ -3604,7 +3675,7 @@
       });
     },
 
-    // 从 WebDAV 下载文件
+    // 从 WebDAV 下载文件并恢复所有缓存
     async downloadFromWebDAV(filename, config) {
       try {
         UI.toast('正在下载缓存...');
@@ -3627,24 +3698,43 @@
         const importData = JSON.parse(jsonStr);
 
         // 验证数据格式
-        if (!importData.version || !importData.cache) {
+        if (!importData.version || !importData.caches) {
           throw new Error('数据格式不正确');
         }
 
-        // 导入到当前页面
-        const cacheKey = TransStore._cacheKey || `ao3_translator_${window.location.pathname}`;
-        GM_Set(cacheKey, importData.cache);
+        UI.toast(`找到 ${importData.totalCaches} 个缓存，正在导入...`);
 
-        // 重新加载缓存
-        TransStore._cacheKey = cacheKey;
-        TransStore.loadFromCache();
+        let imported = 0;
+        let failed = 0;
 
-        UI.toast('缓存恢复成功');
+        for (const item of importData.caches) {
+          try {
+            if (!item.key || !item.cache) {
+              failed++;
+              continue;
+            }
 
-        // 自动刷新页面以应用缓存
-        setTimeout(() => {
-          location.reload();
-        }, 1000);
+            GM_Set(item.key, item.cache);
+            imported++;
+          } catch (e) {
+            console.error(`[CacheManager] Failed to import cache:`, e);
+            failed++;
+          }
+        }
+
+        if (imported > 0) {
+          UI.toast(`导入成功: ${imported} 个缓存${failed > 0 ? `, 失败: ${failed} 个` : ''}`);
+
+          // 如果当前页面的缓存被更新，刷新页面
+          const currentKey = `ao3_translator_${window.location.pathname}`;
+          if (importData.caches.some(item => item.key === currentKey)) {
+            setTimeout(() => {
+              location.reload();
+            }, 1000);
+          }
+        } else {
+          throw new Error('没有成功导入任何缓存');
+        }
 
       } catch (e) {
         console.error('[CacheManager] Download from WebDAV failed:', e);
@@ -3652,13 +3742,12 @@
       }
     },
 
-    // 生成文件名
-    generateFilename() {
-      const info = Controller.getWorkInfo ? Controller.getWorkInfo() : {};
-      const workTitle = (info && info.workTitle) || 'work';
-      const chapterTitle = (info && info.chapterTitle) || 'chapter';
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      return `ao3-cache-${workTitle}-${chapterTitle}-${timestamp}`.replace(/[^\w\-]/g, '_');
+    // 生成缓存文件名
+    generateCacheFilename(url, index) {
+      // 将 URL 转换为安全的文件名
+      // 例如: /works/12345/chapters/67890 -> works_12345_chapters_67890.json
+      const safeName = url.replace(/^\//, '').replace(/\//g, '_').replace(/[^\w\-]/g, '_');
+      return `cache_${index}_${safeName}.json`;
     },
 
     // 轻量级 ZIP 创建器 (内联实现,避免外部依赖)
