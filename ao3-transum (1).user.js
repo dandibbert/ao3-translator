@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.2
+// @version      1.2.3
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -119,49 +119,56 @@
     });
   }
 
-  // Safari 兼容的下载函数
+  // Safari 兼容的下载函数（异步版本）
   function downloadBlob(blob, filename) {
-    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    return new Promise((resolve, reject) => {
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
-    if (isSafari) {
-      // Safari 特殊处理
-      const reader = new FileReader();
-      reader.onload = function() {
-        const link = document.createElement('a');
-        link.href = reader.result;
-        link.download = filename;
-        link.style.display = 'none';
+      if (isSafari) {
+        // Safari 特殊处理
+        const reader = new FileReader();
+        reader.onload = function() {
+          const link = document.createElement('a');
+          link.href = reader.result;
+          link.download = filename;
+          link.style.display = 'none';
 
-        // Safari 需要将链接添加到 DOM 并模拟用户点击
-        document.body.appendChild(link);
+          // Safari 需要将链接添加到 DOM 并模拟用户点击
+          document.body.appendChild(link);
 
-        // 使用 setTimeout 确保 DOM 更新
-        setTimeout(() => {
-          link.click();
-
-          // 清理
+          // 使用 setTimeout 确保 DOM 更新
           setTimeout(() => {
-            document.body.removeChild(link);
-          }, 100);
-        }, 0);
-      };
-      reader.readAsDataURL(blob);
-    } else {
-      // Chrome/Firefox 标准方法
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
+            link.click();
 
-      // 清理
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 100);
-    }
+            // 清理
+            setTimeout(() => {
+              document.body.removeChild(link);
+              resolve();
+            }, 100);
+          }, 0);
+        };
+        reader.onerror = function(error) {
+          reject(new Error('FileReader error: ' + error));
+        };
+        reader.readAsDataURL(blob);
+      } else {
+        // Chrome/Firefox 标准方法
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+
+        // 清理
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          resolve();
+        }, 100);
+      }
+    });
   }
 
   function deepMerge(a,b){ if(!b) return a; const o=Array.isArray(a)?[...a]:{...a}; for(const k in b){ o[k]=(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k]))?deepMerge(a[k]||{},b[k]):b[k]; } return o; }
@@ -3473,13 +3480,16 @@
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const filename = `ao3-caches-${timestamp}.json`;
 
-        const jsonStr = JSON.stringify(exportData, null, 2);
+        // 不使用格式化以减小文件大小和加快处理速度
+        const jsonStr = JSON.stringify(exportData);
         const fileSizeMB = (jsonStr.length / 1024 / 1024).toFixed(2);
 
-        UI.toast(`正在准备下载 ${exportData.totalCaches} 个缓存 (${fileSizeMB} MB)...`);
+        UI.toast(`正在下载 ${exportData.totalCaches} 个缓存 (${fileSizeMB} MB)...`);
 
         const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
-        downloadBlob(blob, filename);
+
+        // 等待下载完成
+        await downloadBlob(blob, filename);
 
         UI.toast(`成功导出 ${exportData.totalCaches} 个缓存`);
       } catch (e) {
@@ -3558,7 +3568,8 @@
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const filename = `ao3-caches-${timestamp}.json`;
 
-        const jsonStr = JSON.stringify(exportData, null, 2);
+        // 不使用格式化以减小文件大小和加快处理速度
+        const jsonStr = JSON.stringify(exportData);
         const fileSizeMB = (jsonStr.length / 1024 / 1024).toFixed(2);
 
         console.log(`[WebDAV Upload] File size: ${fileSizeMB} MB, ${exportData.totalCaches} caches`);
