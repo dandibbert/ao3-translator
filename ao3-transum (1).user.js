@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.1.9
+// @version      1.2.0
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -81,12 +81,14 @@
   // GM_xmlhttpRequest 包装器，用于绕过 CORS 限制
   function gmFetch(url, options = {}) {
     return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
+      const requestConfig = {
         method: options.method || 'GET',
         url: url,
         headers: options.headers || {},
-        data: options.body,
+        timeout: options.timeout || 60000, // 默认60秒超时
         onload: (response) => {
+          console.log(`[gmFetch] ${options.method || 'GET'} ${url} - Status: ${response.status}`);
+
           // 模拟 fetch API 的 Response 对象
           const mockResponse = {
             ok: response.status >= 200 && response.status < 300,
@@ -99,12 +101,21 @@
           resolve(mockResponse);
         },
         onerror: (error) => {
-          reject(new Error('Network request failed'));
+          console.error('[gmFetch] Network error:', error);
+          reject(new Error(`Network request failed: ${error.error || 'Unknown error'}`));
         },
         ontimeout: () => {
-          reject(new Error('Request timeout'));
+          console.error('[gmFetch] Request timeout');
+          reject(new Error('Request timeout (60s)'));
         }
-      });
+      };
+
+      // 如果有 body/data，添加到请求中
+      if (options.body) {
+        requestConfig.data = options.body;
+      }
+
+      GM_xmlhttpRequest(requestConfig);
     });
   }
 
@@ -3557,10 +3568,14 @@
         const filename = `ao3-caches-${timestamp}.json`;
 
         const jsonStr = JSON.stringify(exportData, null, 2);
+        const fileSizeMB = (jsonStr.length / 1024 / 1024).toFixed(2);
+
+        console.log(`[WebDAV Upload] File size: ${fileSizeMB} MB, ${exportData.totalCaches} caches`);
+
         const url = `${trimSlash(webdavConfig.url)}/${filename}`;
         const auth = btoa(`${webdavConfig.username}:${webdavConfig.password}`);
 
-        UI.toast(`正在上传 ${exportData.totalCaches} 个缓存到 WebDAV...`);
+        UI.toast(`正在上传 ${exportData.totalCaches} 个缓存 (${fileSizeMB} MB)...`);
 
         const response = await gmFetch(url, {
           method: 'PUT',
@@ -3568,11 +3583,15 @@
             'Authorization': `Basic ${auth}`,
             'Content-Type': 'application/json'
           },
-          body: jsonStr
+          body: jsonStr,
+          timeout: 120000 // 2分钟超时，适应大文件
         });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        console.log(`[WebDAV Upload] Response status: ${response.status}`);
+
+        if (!response.ok && response.status !== 201 && response.status !== 204) {
+          const errorText = await response.text().catch(() => response.statusText);
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
 
         UI.toast(`已上传 ${exportData.totalCaches} 个缓存到 WebDAV`);
