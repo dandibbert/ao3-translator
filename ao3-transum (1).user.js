@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.3
+// @version      1.2.4
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -66,10 +66,10 @@
     },
     set(p) { const merged = deepMerge(this.get(), p); GM_Set(NS, merged); return merged; }
   };
-  function GM_Get(k){ try{ return GM_getValue(k); }catch{ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch{ return null; } } }
-  function GM_Set(k,v){ try{ GM_setValue(k,v); }catch{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} } }
-  function GM_Del(k){ try{ GM_deleteValue(k); }catch{ try{ localStorage.removeItem(k); }catch{} } }
-  function GM_ListKeys(){ try{ return (typeof GM_listValues === 'function') ? GM_listValues() : Object.keys(localStorage); }catch{ try{ return Object.keys(localStorage); }catch{ return []; } } }
+  function GM_Get(k) { try { return GM_getValue(k); } catch { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } } }
+  function GM_Set(k, v) { try { GM_setValue(k, v); } catch { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } } }
+  function GM_Del(k) { try { GM_deleteValue(k); } catch { try { localStorage.removeItem(k); } catch { } } }
+  function GM_ListKeys() { try { return (typeof GM_listValues === 'function') ? GM_listValues() : Object.keys(localStorage); } catch { try { return Object.keys(localStorage); } catch { return []; } } }
 
 
   const d = (...args) => { if (settings.get().debug) console.log('[AO3X]', ...args); };
@@ -127,7 +127,7 @@
       if (isSafari) {
         // Safari 特殊处理
         const reader = new FileReader();
-        reader.onload = function() {
+        reader.onload = function () {
           const link = document.createElement('a');
           link.href = reader.result;
           link.download = filename;
@@ -147,7 +147,7 @@
             }, 100);
           }, 0);
         };
-        reader.onerror = function(error) {
+        reader.onerror = function (error) {
           reject(new Error('FileReader error: ' + error));
         };
         reader.readAsDataURL(blob);
@@ -171,7 +171,7 @@
     });
   }
 
-  function deepMerge(a,b){ if(!b) return a; const o=Array.isArray(a)?[...a]:{...a}; for(const k in b){ o[k]=(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k]))?deepMerge(a[k]||{},b[k]):b[k]; } return o; }
+  function deepMerge(a, b) { if (!b) return a; const o = Array.isArray(a) ? [...a] : { ...a }; for (const k in b) { o[k] = (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) ? deepMerge(a[k] || {}, b[k]) : b[k]; } return o; }
   function sanitizeHTML(html) {
     const tmp = document.createElement('div'); tmp.innerHTML = html;
     tmp.querySelectorAll('script, style, iframe, object, embed').forEach(n => n.remove());
@@ -184,8 +184,8 @@
     });
     return tmp.innerHTML;
   }
-  function stripHtmlToText(html){ const div=document.createElement('div'); div.innerHTML=html; return (div.textContent||'').replace(/\s+/g,' ').trim(); }
-  function escapeHTML(s){ return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+  function stripHtmlToText(html) { const div = document.createElement('div'); div.innerHTML = html; return (div.textContent || '').replace(/\s+/g, ' ').trim(); }
+  function escapeHTML(s) { return s.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
   /* ================= Heuristic Token Estimator (local, no external deps) ================= */
   const TKT = {
@@ -202,7 +202,7 @@
       return heuristicCount(joined) + structuralOverhead;
     }
   };
-  function heuristicCount(text){
+  function heuristicCount(text) {
     const s = (text || '');
     if (!s) return 0;
     // Heuristic: English-like ~1 token per 4 chars; Chinese-like ~1 per 1.7 chars.
@@ -212,11 +212,11 @@
     const estZH = Math.ceil(chars / 1.7);
     return Math.ceil(Math.max(estEN, estZH) * 1.1);
   }
-  async function estimateTokensForText(text){ const s=settings.get(); return await TKT.countTextTokens(text, s.model.id); }
-  async function estimatePromptTokensFromMessages(messages){ const s=settings.get(); return await TKT.countPromptTokens(messages, s.model.id); }
+  async function estimateTokensForText(text) { const s = settings.get(); return await TKT.countTextTokens(text, s.model.id); }
+  async function estimatePromptTokensFromMessages(messages) { const s = settings.get(); return await TKT.countPromptTokens(messages, s.model.id); }
 
   /* ================= AO3 DOM Select ================= */
-  function getHostElement(){ return $('#chapters') || $('#workskin') || document.body; }
+  function getHostElement() { return $('#chapters') || $('#workskin') || document.body; }
   function collectChapterUserstuffSmart() {
     const EXCLUDE_SEL = '.preface, .summary, .notes, .endnotes, .afterword, .work.meta, .series, .children';
     let nodes = [];
@@ -280,7 +280,7 @@
       // 显示/隐藏悬浮菜单
       const showFloatingMenu = async () => {
         if (isMenuVisible) return;
-        
+
         // 检查是否有多个已翻译章节
         const translatedChapters = await Controller.getTranslatedChapters();
         if (translatedChapters && translatedChapters.length > 1) {
@@ -288,7 +288,7 @@
         } else {
           btnBatchDownload.style.display = 'none';
         }
-        
+
         isMenuVisible = true;
         floatingMenu.style.display = 'flex';
         // 添加动画效果
@@ -466,8 +466,8 @@
       wrap.appendChild(btnTranslate); wrap.appendChild(btnMain); document.body.appendChild(wrap);
       UI.buildPanel(); UI.buildToolbar(); UI.ensureToast();
     },
-    ensureToast(){ if(!$('#ao3x-toast')){ const t=document.createElement('div'); t.id='ao3x-toast'; t.className='ao3x-toast'; document.body.appendChild(t); } },
-    toast(msg){ const t=$('#ao3x-toast'); if(!t) return; const n=document.createElement('div'); n.className='item'; n.textContent=msg; t.appendChild(n); setTimeout(()=>{ n.style.opacity='0'; n.style.transition='opacity .3s'; setTimeout(()=>n.remove(),300); }, 1400); },
+    ensureToast() { if (!$('#ao3x-toast')) { const t = document.createElement('div'); t.id = 'ao3x-toast'; t.className = 'ao3x-toast'; document.body.appendChild(t); } },
+    toast(msg) { const t = $('#ao3x-toast'); if (!t) return; const n = document.createElement('div'); n.className = 'item'; n.textContent = msg; t.appendChild(n); setTimeout(() => { n.style.opacity = '0'; n.style.transition = 'opacity .3s'; setTimeout(() => n.remove(), 300); }, 1400); },
     buildPanel() {
       const mask = document.createElement('div'); mask.className = 'ao3x-panel-mask'; mask.addEventListener('click', () => UI.closePanel());
       const panel = document.createElement('div'); panel.className = 'ao3x-panel';
@@ -768,12 +768,12 @@
 
         const newSettings = settings.set(collectPanelValues(panel));
         applyFontSize();
-        
+
         // 同步到 ChunkIndicator
         if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.settings) {
           ChunkIndicator.settings.showPreview = !!(newSettings.chunkIndicator?.showPreview);
         }
-        
+
         saveToast();
       };
 
@@ -795,29 +795,29 @@
 
       panel.addEventListener('input', debounce(autosave, 300), true);
       panel.addEventListener('change', autosave, true);
-      panel.addEventListener('blur', (e)=>{ if(panel.contains(e.target)) autosave(); }, true);
+      panel.addEventListener('blur', (e) => { if (panel.contains(e.target)) autosave(); }, true);
 
       // 存储管理：列出与清理（GM 与 localStorage 双覆盖）
       $('#ao3x-list-storage', panel)?.addEventListener('click', () => {
-        try{
+        try {
           const gmKeys = GM_ListKeys().filter(k => typeof k === 'string' && k.startsWith('ao3_translator_'));
-          const lsKeys = (function(){ try{ return Object.keys(localStorage).filter(k => k.startsWith('ao3_translator_')); }catch{ return []; } })();
-          const allKeys = Array.from(new Set([...(gmKeys||[]), ...(lsKeys||[])]));
-          if (!allKeys.length){ UI.toast('未发现翻译缓存键'); return; }
-          const lines = allKeys.slice(0,50).join('\n') + (allKeys.length>50?'\n…':'');
+          const lsKeys = (function () { try { return Object.keys(localStorage).filter(k => k.startsWith('ao3_translator_')); } catch { return []; } })();
+          const allKeys = Array.from(new Set([...(gmKeys || []), ...(lsKeys || [])]));
+          if (!allKeys.length) { UI.toast('未发现翻译缓存键'); return; }
+          const lines = allKeys.slice(0, 50).join('\n') + (allKeys.length > 50 ? '\n…' : '');
           alert(`翻译缓存键（GM:${gmKeys.length} / LS:${lsKeys.length}）：\n${lines}`);
-        }catch(e){ UI.toast('读取存储键失败'); console.warn(e); }
+        } catch (e) { UI.toast('读取存储键失败'); console.warn(e); }
       });
 
       $('#ao3x-clear-all-cache', panel)?.addEventListener('click', () => {
         const gmKeys = GM_ListKeys().filter(k => typeof k === 'string' && k.startsWith('ao3_translator_'));
-        const lsKeys = (function(){ try{ return Object.keys(localStorage).filter(k => k.startsWith('ao3_translator_')); }catch{ return []; } })();
-        const total = (gmKeys?.length||0) + (lsKeys?.length||0);
-        if (!total){ UI.toast('没有可清理的翻译缓存'); return; }
+        const lsKeys = (function () { try { return Object.keys(localStorage).filter(k => k.startsWith('ao3_translator_')); } catch { return []; } })();
+        const total = (gmKeys?.length || 0) + (lsKeys?.length || 0);
+        if (!total) { UI.toast('没有可清理的翻译缓存'); return; }
         if (!confirm(`将清理 GM:${gmKeys.length} / LS:${lsKeys.length} 个翻译缓存，是否继续？`)) return;
         let removedGM = 0, removedLS = 0;
-        for (const k of gmKeys){ try{ GM_Del(k); removedGM++; }catch{} }
-        for (const k of lsKeys){ try{ localStorage.removeItem(k); removedLS++; }catch{} }
+        for (const k of gmKeys) { try { GM_Del(k); removedGM++; } catch { } }
+        for (const k of lsKeys) { try { localStorage.removeItem(k); removedLS++; } catch { } }
         UI.toast(`清理完成 GM:${removedGM} / LS:${removedLS}`);
       });
 
@@ -1009,7 +1009,7 @@
       }
     }
   };
-  const saveToast = (()=>{ let t; return ()=>{ clearTimeout(t); t=setTimeout(()=>UI.toast('已保存'), 120); }; })();
+  const saveToast = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => UI.toast('已保存'), 120); }; })();
 
   // 应用字体大小设置
   function applyFontSize() {
@@ -1018,7 +1018,7 @@
     document.documentElement.style.setProperty('--translation-font-size', `${fontSize}px`);
   }
 
-  function GM_AddCSS(){
+  function GM_AddCSS() {
     GM_addStyle(`
       :root{
         --c-bg:#fafafa; --c-fg:#0b0b0d; --c-card:#ffffff; --c-muted:#6b7280;
@@ -1797,7 +1797,7 @@
 
     `);
   }
-  function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
+  function debounce(fn, wait) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); }; }
   function normalizeReasoningEffortValue(val) {
     if (val == null) return null;
     if (typeof val === 'number') {
@@ -1867,7 +1867,7 @@
         ratioTextToSummary: Math.max(0.1, Math.min(1, parseFloat($('#ao3x-summary-ratio', panel).value) || cur.summary?.ratioTextToSummary || 0.3))
       },
       prompt: { system: $('#ao3x-sys', panel).value, userTemplate: $('#ao3x-user', panel).value },
-      stream: { enabled: $('#ao3x-stream', panel).checked, minFrameMs: Math.max(0, parseInt($('#ao3x-stream-minframe', panel).value||String(cur.stream.minFrameMs||40),10)) },
+      stream: { enabled: $('#ao3x-stream', panel).checked, minFrameMs: Math.max(0, parseInt($('#ao3x-stream-minframe', panel).value || String(cur.stream.minFrameMs || 40), 10)) },
       concurrency: Math.max(1, Math.min(8, parseInt($('#ao3x-conc', panel).value, 10) || cur.concurrency)),
       debug: $('#ao3x-debug', panel).checked,
       planner: {
@@ -1875,8 +1875,8 @@
         ratioOutPerIn: Math.max(0.3, parseFloat($('#ao3x-ratio', panel).value || cur.planner?.ratioOutPerIn || 0.7))
       },
       watchdog: {
-        idleMs: (function(){ const v = parseInt($('#ao3x-idle', panel).value || cur.watchdog.idleMs, 10); return v === -1 ? -1 : Math.max(5000, v); })(),
-        hardMs: (function(){ const v = parseInt($('#ao3x-hard', panel).value || cur.watchdog.hardMs, 10); return v === -1 ? -1 : Math.max(10000, v); })(),
+        idleMs: (function () { const v = parseInt($('#ao3x-idle', panel).value || cur.watchdog.idleMs, 10); return v === -1 ? -1 : Math.max(5000, v); })(),
+        hardMs: (function () { const v = parseInt($('#ao3x-hard', panel).value || cur.watchdog.hardMs, 10); return v === -1 ? -1 : Math.max(10000, v); })(),
         maxRetry: Math.max(0, Math.min(3, parseInt($('#ao3x-retry', panel).value || cur.watchdog.maxRetry, 10)))
       },
       ui: {
@@ -1906,11 +1906,11 @@
     else (getHostElement() || document.body).appendChild(c);
     renderContainer = c; return c;
   }
-  function renderPlanSummary(plan){
-    const c=ensureRenderContainer();
+  function renderPlanSummary(plan) {
+    const c = ensureRenderContainer();
     let box = $('#ao3x-plan', c);
-    if(!box){ box=document.createElement('div'); box.id='ao3x-plan'; box.className='ao3x-plan'; c.appendChild(box); }
-    const rows = plan.map((p,i)=>{
+    if (!box) { box = document.createElement('div'); box.id = 'ao3x-plan'; box.className = 'ao3x-plan'; c.appendChild(box); }
+    const rows = plan.map((p, i) => {
       const estIn = p.inTok != null ? p.inTok : 0;
       return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>块 #${i}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
@@ -1970,7 +1970,7 @@
     cleanupPlanStrayGlyphText(box);
   }
   const _ao3xStrayGlyphRe = /^[▾▸↓]+$/;
-  function cleanupPlanStrayGlyphText(box){
+  function cleanupPlanStrayGlyphText(box) {
     if (!box || !(box instanceof Element)) return;
     const kvs = box.querySelectorAll('.ao3x-kv');
     kvs.forEach(kv => {
@@ -1983,14 +1983,14 @@
       }
     });
   }
-  function updateKV(kv, kvId = 'ao3x-kv'){
+  function updateKV(kv, kvId = 'ao3x-kv') {
     // 直接使用 document.querySelector，确保可靠性
     const elem = document.querySelector(`#${kvId}`);
-    if(!elem) {
+    if (!elem) {
       console.error(`[updateKV] 找不到容器 #${kvId}`, 'kv数据:', kv);
       // 尝试查找是否有重复的元素
       const allElems = document.querySelectorAll(`#${kvId}`);
-      if(allElems.length > 1) {
+      if (allElems.length > 1) {
         console.error(`[updateKV] 发现${allElems.length}个重复的 #${kvId} 元素！`);
       }
       return;
@@ -2017,12 +2017,12 @@
   function scrollToChunkStart(chunkIndex) {
     const idx = Number(chunkIndex);
     if (!Number.isFinite(idx)) return;
-    
+
     // 使用与 ChunkIndicator 相同的查找方式：直接在整个文档中查找块元素
     // 这样即使容器结构变化也能正常工作
     const allBlocks = document.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
     let block = null;
-    
+
     // 遍历所有块，找到匹配的 data-index
     for (const b of allBlocks) {
       if (b.getAttribute('data-index') === String(idx)) {
@@ -2030,18 +2030,18 @@
         break;
       }
     }
-    
+
     if (!block) {
       const indices = Array.from(allBlocks).map(b => b.getAttribute('data-index')).filter(Boolean);
-      d('scrollToChunkStart:block-not-found', { 
-        targetIdx: idx, 
+      d('scrollToChunkStart:block-not-found', {
+        targetIdx: idx,
         availableIndices: indices,
         totalBlocks: allBlocks.length
       });
       UI.toast(`未找到块 #${idx}（共 ${allBlocks.length} 个块）`);
       return;
     }
-    
+
     const anchor = block.querySelector('.ao3x-anchor') || block;
     anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
     block.classList.add('ao3x-block-highlight');
@@ -2049,40 +2049,40 @@
   }
 
   /* ================= Token-aware Packing (precise) ================= */
-  async function packIntoChunks(htmlList, budgetTokens){
+  async function packIntoChunks(htmlList, budgetTokens) {
     const s = settings.get();
-    const plan=[]; let cur=[]; let curTok=0;
+    const plan = []; let cur = []; let curTok = 0;
 
-    async function tokOf(html){
+    async function tokOf(html) {
       const t = stripHtmlToText(html);
       return await TKT.countTextTokens(t, s.model.id);
     }
-    async function flush(){
-      if(cur.length){
+    async function flush() {
+      if (cur.length) {
         const html = cur.join('\n');
         const text = stripHtmlToText(html);
         const inTok = await TKT.countTextTokens(text, s.model.id);
-        plan.push({html, text, inTok});
+        plan.push({ html, text, inTok });
         cur = []; curTok = 0;
       }
     }
 
-    for (const h of htmlList){
+    for (const h of htmlList) {
       const tTok = await tokOf(h);
-      if (tTok > budgetTokens){
+      if (tTok > budgetTokens) {
         const parts = segmentSentencesFromHTML(h);
-        for (const p of parts){
+        for (const p of parts) {
           const pTok = await tokOf(p);
-          if (pTok > budgetTokens){
+          if (pTok > budgetTokens) {
             const txt = stripHtmlToText(p);
             const byPunc = txt.split(/([。！？!?…]+["”』）】]*\s*)/);
-            let accum=''; let accumTok=0;
-            for (let i=0;i<byPunc.length;i+=2){
-              const chunk=(byPunc[i]||'')+(byPunc[i+1]||''); if(!chunk) continue;
+            let accum = ''; let accumTok = 0;
+            for (let i = 0; i < byPunc.length; i += 2) {
+              const chunk = (byPunc[i] || '') + (byPunc[i + 1] || ''); if (!chunk) continue;
               const test = accum + chunk;
               const testTok = await TKT.countTextTokens(test, s.model.id);
-              if (curTok + testTok > budgetTokens){
-                if (accum){
+              if (curTok + testTok > budgetTokens) {
+                if (accum) {
                   const aTok = await TKT.countTextTokens(accum, s.model.id);
                   if (curTok + aTok > budgetTokens) await flush();
                   cur.push(accum); curTok += aTok;
@@ -2092,7 +2092,7 @@
                 accum = test; accumTok = testTok;
               }
             }
-            if (accum){
+            if (accum) {
               if (curTok + accumTok > budgetTokens) await flush();
               cur.push(accum); curTok += accumTok;
             }
@@ -2107,22 +2107,22 @@
       }
     }
     await flush();
-    return plan.map((p,i)=>({index:i, html:p.html, text:p.text, inTok:p.inTok}));
+    return plan.map((p, i) => ({ index: i, html: p.html, text: p.text, inTok: p.inTok }));
   }
-  function segmentSentencesFromHTML(html){
-    const tmp=document.createElement('div'); tmp.innerHTML=html; const parts=[];
+  function segmentSentencesFromHTML(html) {
+    const tmp = document.createElement('div'); tmp.innerHTML = html; const parts = [];
     // 处理块级元素，包括blockquote在内的所有块级元素
-    const blocks=$all('p, div, li, pre, blockquote', tmp);
+    const blocks = $all('p, div, li, pre, blockquote', tmp);
 
-    if(!blocks.length){
+    if (!blocks.length) {
       parts.push(html);
       return parts;
     }
 
     // 处理所有块级元素，包括blockquote
-    for(const b of blocks) {
+    for (const b of blocks) {
       // 检查是否在其他块级元素内部，避免重复处理
-      if(b.closest('p, div, li, pre, blockquote') && !b.parentElement?.isEqualNode(tmp)) continue;
+      if (b.closest('p, div, li, pre, blockquote') && !b.parentElement?.isEqualNode(tmp)) continue;
       parts.push(b.outerHTML);
     }
 
@@ -2148,7 +2148,7 @@
     if (finishReason !== 'stop' && finishReason !== 'length') {
       const reason = reasonMap[finishReason] || `未知原因: ${finishReason}`;
       UI.toast(`${label} 非正常完成: ${reason}`);
-      d('finish_reason:abnormal', {label, finishReason, reason});
+      d('finish_reason:abnormal', { label, finishReason, reason });
     }
   }
 
@@ -2200,11 +2200,11 @@
   }
 
   /* ================= OpenAI-compatible + SSE ================= */
-  function resolveEndpoint(baseUrl, apiPath){ if(!baseUrl) throw new Error('请在设置中填写 Base URL'); const hasV1=/\/v1\//.test(baseUrl); return hasV1? baseUrl : `${trimSlash(baseUrl)}/${trimSlash(apiPath||'v1/chat/completions')}`; }
-  function resolveModelsEndpoint(baseUrl){ if(!baseUrl) throw new Error('请填写 Base URL'); const m=baseUrl.match(/^(.*?)(\/v1\/.*)$/); return m? `${m[1]}/v1/models` : `${trimSlash(baseUrl)}/v1/models`; }
-  async function fetchJSON(url, key, body){
+  function resolveEndpoint(baseUrl, apiPath) { if (!baseUrl) throw new Error('请在设置中填写 Base URL'); const hasV1 = /\/v1\//.test(baseUrl); return hasV1 ? baseUrl : `${trimSlash(baseUrl)}/${trimSlash(apiPath || 'v1/chat/completions')}`; }
+  function resolveModelsEndpoint(baseUrl) { if (!baseUrl) throw new Error('请填写 Base URL'); const m = baseUrl.match(/^(.*?)(\/v1\/.*)$/); return m ? `${m[1]}/v1/models` : `${trimSlash(baseUrl)}/v1/models`; }
+  async function fetchJSON(url, key, body) {
     try {
-      const res = await fetch(url, {
+      const res = await gmFetch(url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -2228,9 +2228,9 @@
       throw new RequestError(err?.message || '请求失败', { cause: err, isNetworkError: true });
     }
   }
-  function supportsStreamingFetch(){ try{ return !!(window.ReadableStream && window.TextDecoder && window.AbortController); } catch{ return false; } }
+  function supportsStreamingFetch() { return true; }
 
-  async function postChatWithRetry({ endpoint, key, payload, stream, onDelta, onDone, onError, onFinishReason, label, onAttempt }){
+  async function postChatWithRetry({ endpoint, key, payload, stream, onDelta, onDone, onError, onFinishReason, label, onAttempt }) {
     const cfg = settings.get().watchdog || {};
     const maxRetry = Math.max(0, cfg.maxRetry || 0);
     let attempt = 0;
@@ -2240,12 +2240,12 @@
         if (typeof onAttempt === 'function') {
           try { onAttempt(attempt); } catch (hookErr) { d('chat:onAttempt-error', { label, attempt, error: hookErr?.message }); }
         }
-        d('chat:start', {label, attempt, stream});
+        d('chat:start', { label, attempt, stream });
         await postChatOnce({ endpoint, key, payload, stream, onDelta, onDone, onFinishReason, label, idleMs: cfg.idleMs, hardMs: cfg.hardMs });
-        d('chat:done', {label, attempt});
+        d('chat:done', { label, attempt });
         return;
       } catch (e) {
-        d('chat:error', {label, attempt, error: e.message, status: e.status});
+        d('chat:error', { label, attempt, error: e.message, status: e.status });
         const msg = e?.message || '';
         if (msg && (msg.includes('idle-timeout') || msg.includes('hard-timeout'))) {
           UI.toast(`块 ${label} 因超时失败`);
@@ -2253,85 +2253,86 @@
         const canRetry = attempt <= maxRetry && shouldRetryError(e);
         if (!canRetry) { if (onError) onError(e); return; }
         const delay = computeRetryDelay(e, attempt + 1);
-        d('chat:retrying', {label, attemptNext: attempt+1, delay});
+        d('chat:retrying', { label, attemptNext: attempt + 1, delay });
         await sleep(delay);
       }
     }
   }
-  async function postChatOnce({ endpoint, key, payload, stream, onDelta, onDone, onFinishReason, label, idleMs, hardMs }){
-    if(stream && supportsStreamingFetch()){
-      await fetchSSEWithAbort(endpoint, key, payload, onDelta, onFinishReason, {label, idleMs, hardMs});
+  async function postChatOnce({ endpoint, key, payload, stream, onDelta, onDone, onFinishReason, label, idleMs, hardMs }) {
+    if (stream && supportsStreamingFetch()) {
+      await fetchSSEWithAbort(endpoint, key, payload, onDelta, onFinishReason, { label, idleMs, hardMs });
       onDone && onDone();
     } else {
-      const full=await fetchJSON(endpoint, key, payload);
-      let content=full?.choices?.[0]?.message?.content || '';
+      const full = await fetchJSON(endpoint, key, payload);
+      let content = full?.choices?.[0]?.message?.content || '';
       const fr = full?.choices?.[0]?.finish_reason || null;
       // 过滤思考内容，只保留非思考内容作为译文
       if (content) {
         content = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')  // 标准XML标签格式
-                        .replace(/<think>[\s\S]*?<\/think>/g, '')  // 简化XML标签格式
-                        .replace(/^Thought:\s*[^\n]*\n\n/gm, '')  // 行首的Thought前缀格式（必须有双换行）
-                        .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')  // 行首的思考过程前缀（必须有双换行）
-                        .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')  // 行首的内心独白前缀（必须有双换行）
-                        .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');  // 中文标签格式
+          .replace(/<think>[\s\S]*?<\/think>/g, '')  // 简化XML标签格式
+          .replace(/^Thought:\s*[^\n]*\n\n/gm, '')  // 行首的Thought前缀格式（必须有双换行）
+          .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')  // 行首的思考过程前缀（必须有双换行）
+          .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')  // 行首的内心独白前缀（必须有双换行）
+          .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');  // 中文标签格式
       }
       onDelta && onDelta(content); onFinishReason && onFinishReason(fr); onDone && onDone();
     }
   }
-  async function fetchSSEWithAbort(url, key, body, onDelta, onFinishReason, {label='chunk', idleMs=10000, hardMs=90000} = {}){
-    const ac = new AbortController();
-    const startedAt = performance.now();
-    let lastTick = startedAt;
-    let bytes = 0, events = 0;
-    let finishReason = null;
-    let retryAfterMs = null;
-    let reader = null;
-    let res;
-
-    const useIdle = !(idleMs != null && idleMs < 0);
-    const useHard = !(hardMs != null && hardMs < 0);
-    const idleTimer = useIdle ? setInterval(() => {
-      const now = performance.now();
-      if (now - lastTick > idleMs) {
-        if (useIdle) clearInterval(idleTimer);
-        if (useHard) clearTimeout(hardTimer);
-        d('sse:idle-timeout', { label, ms: now - lastTick });
-        ac.abort(new Error('idle-timeout'));
-      }
-    }, Math.max(2000, Math.floor((idleMs || 0) / 4) || 2000)) : null;
-    const hardTimer = useHard ? setTimeout(() => {
-      if (useIdle && idleTimer) clearInterval(idleTimer);
-      d('sse:hard-timeout', { label, ms: hardMs });
-      ac.abort(new Error('hard-timeout'));
-    }, hardMs) : null;
-
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(key ? { 'authorization': `Bearer ${key}` } : {})
-        },
-        body: JSON.stringify(body),
-        signal: ac.signal
-      }).catch(err => {
-        throw new RequestError(err?.message || '网络请求失败', { cause: err, isNetworkError: true });
-      });
-
-      retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
-      if (!res.ok) {
-        const t = await res.text();
-        throw new RequestError(`HTTP ${res.status}: ${t}`, { status: res.status, retryAfterMs });
-      }
-      if (!res.body || typeof res.body.getReader !== 'function') {
-        throw new RequestError('响应不支持流式读取', { status: res.status, retryAfterMs });
-      }
-
-      reader = res.body.getReader();
-      const td = new TextDecoder('utf-8');
+  function fetchSSEWithAbort(url, key, body, onDelta, onFinishReason, { label = 'chunk', idleMs = 10000, hardMs = 90000 } = {}) {
+    return new Promise((resolve, reject) => {
+      let lastTxtLen = 0;
       let buf = '';
       let eventBuf = [];
       let sawDone = false;
+      let finishReason = null;
+      let req = null;
+
+      const cleanReq = () => { if (req) { try { req.abort(); } catch { } req = null; } };
+
+      let lastTick = performance.now();
+
+      const checkIdle = () => {
+        const now = performance.now();
+        if (now - lastTick > idleMs) {
+          cleanup();
+          cleanReq();
+          reject(new RequestError('idle-timeout', { isTimeout: true }));
+        }
+      };
+
+      const idleTimer = (idleMs > 0) ? setInterval(checkIdle, 2000) : null;
+
+      const hardTimer = (hardMs > 0) ? setTimeout(() => {
+        cleanup();
+        cleanReq();
+        reject(new RequestError('hard-timeout', { isTimeout: true }));
+      }, hardMs) : null;
+
+      const cleanup = () => {
+        if (idleTimer) clearInterval(idleTimer);
+        if (hardTimer) clearTimeout(hardTimer);
+      };
+
+      const processChunk = (text) => {
+        if (!text) return;
+        buf += text;
+        const lines = buf.split(/\r?\n/);
+        buf = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const data = line.slice(5).trim();
+            if (data === '[DONE]') {
+              flushEvent();
+              sawDone = true;
+              return;
+            }
+            if (data) eventBuf.push(data);
+          } else if (!line.trim()) {
+            flushEvent();
+          }
+        }
+      };
 
       const flushEvent = () => {
         if (!eventBuf.length) return;
@@ -2343,126 +2344,95 @@
           let delta = choice?.delta?.content ?? choice?.text ?? '';
           if (delta) {
             delta = delta.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
-                         .replace(/<think>[\s\S]*?<\/think>/g, '')
-                         .replace(/^Thought:\s*[^\n]*\n\n/gm, '')
-                         .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')
-                         .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')
-                         .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');
+              .replace(/<think>[\s\S]*?<\/think>/g, '')
+              .replace(/^Thought:\s*[^\n]*\n\n/gm, '')
+              .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')
+              .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')
+              .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');
           }
-          if (typeof choice?.finish_reason === 'string') {
-            finishReason = choice.finish_reason;
-          }
+          if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
           if (delta) {
             onDelta(delta);
             lastTick = performance.now();
-            bytes += delta.length;
-            events++;
           }
-        } catch (err) {
-          d('sse:parse-error', { label, error: err?.message, payload: joined });
-        }
+        } catch (e) { d('sse:parse-error', { label, payload: joined }); }
       };
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (!value || !value.length) continue;
-        const chunk = td.decode(value, { stream: true });
-        if (!chunk) continue;
-        buf += chunk;
-        lastTick = performance.now();
-        bytes += chunk.length;
-        const lines = buf.split(/\r?\n/);
-        buf = lines.pop() ?? '';
-        for (const line of lines) {
-          if (line.startsWith('data:')) {
-            const data = line.slice(5).trim();
-            if (data === '[DONE]') {
-              flushEvent();
-              sawDone = true;
-              lastTick = performance.now();
-              break;
-            }
-            if (data) eventBuf.push(data);
-          } else if (!line.trim()) {
-            flushEvent();
+      req = GM_xmlhttpRequest({
+        method: 'POST',
+        url: url,
+        headers: {
+          'content-type': 'application/json',
+          ...(key ? { 'authorization': `Bearer ${key}` } : {})
+        },
+        data: JSON.stringify(body),
+        onprogress: (r) => {
+          if (sawDone) return;
+          const newSnippet = r.responseText.slice(lastTxtLen);
+          lastTxtLen = r.responseText.length;
+          if (newSnippet) {
+            lastTick = performance.now();
+            processChunk(newSnippet);
           }
+        },
+        onload: (r) => {
+          cleanup();
+          if (r.status >= 200 && r.status < 300) {
+            if (buf.trim()) processChunk(''); // Try to flush remainder
+            if (typeof onFinishReason === 'function') onFinishReason(finishReason);
+            d('sse:complete', { label, finishReason });
+            resolve();
+          } else {
+            reject(new RequestError(`HTTP ${r.status}: ${r.responseText.slice(0, 500)}`, { status: r.status }));
+          }
+        },
+        onerror: (e) => {
+          cleanup();
+          reject(new RequestError('Network error', { isNetworkError: true }));
+        },
+        ontimeout: () => {
+          cleanup();
+          reject(new RequestError('Request timeout', { isTimeout: true }));
         }
-        if (sawDone) break;
-      }
-
-      if (eventBuf.length) flushEvent();
-      if (sawDone && reader) {
-        try { await reader.cancel(); } catch {}
-      }
-      d('sse:complete', { label, ms: Math.round(performance.now() - startedAt), bytes, events, finishReason, sawDone });
-      if (typeof onFinishReason === 'function') onFinishReason(finishReason);
-    } catch (err) {
-      if (err instanceof RequestError) {
-        if (retryAfterMs != null && typeof err.retryAfterMs !== 'number') err.retryAfterMs = retryAfterMs;
-        throw err;
-      }
-      if (err && err.name === 'AbortError') {
-        const reason = ac.signal?.reason;
-        const reasonMsg = reason instanceof Error ? reason.message : (typeof reason === 'string' ? reason : err.message || '请求已中断');
-        throw new RequestError(reasonMsg || '请求已中断', {
-          cause: err,
-          isTimeout: /timeout/i.test(reasonMsg),
-          retryAfterMs
-        });
-      }
-      throw new RequestError(err?.message || '网络请求失败', {
-        cause: err,
-        isNetworkError: err?.name === 'TypeError',
-        retryAfterMs
       });
-    } finally {
-      if (idleTimer) clearInterval(idleTimer);
-      if (hardTimer) clearTimeout(hardTimer);
-      if (reader) {
-        try { reader.releaseLock && reader.releaseLock(); } catch {}
-      }
-      if (res && res.body && typeof res.body.cancel === 'function') {
-        try { res.body.cancel(); } catch {}
-      }
-    }
+    });
   }
 
-  async function getModels(){
-    const s=settings.get(); const url=resolveModelsEndpoint(s.api.baseUrl);
-    const res=await fetch(url,{ headers:{...(s.api.key?{'authorization':`Bearer ${s.api.key}`}:{})} });
-    if(!res.ok){ const t=await res.text(); throw new Error(`HTTP ${res.status}: ${t}`); }
-    const j=await res.json(); const list=j?.data || j?.models || [];
-    return list.map(m=> typeof m === 'string' ? {id:m} : m);
+  async function getModels() {
+    const s = settings.get(); const url = resolveModelsEndpoint(s.api.baseUrl);
+    const res = await gmFetch(url, { headers: { ...(s.api.key ? { 'authorization': `Bearer ${s.api.key}` } : {}) } });
+    if (!res.ok) { const t = await res.text(); throw new Error(`HTTP ${res.status}: ${t}`); }
+    const j = await res.json(); const list = j?.data || j?.models || [];
+    return list.map(m => typeof m === 'string' ? { id: m } : m);
   }
   const ModelBrowser = {
     all: [],
     currentType: 'translate', // 记录当前操作的模型类型
-    async fetchAndRender(panel, type = 'translate'){
+    async fetchAndRender(panel, type = 'translate') {
       this.currentType = type;
-      try{
-        const list=await getModels();
-        this.all=list;
+      try {
+        const list = await getModels();
+        this.all = list;
         this.render(panel, list, type);
-      } catch(e){
-        UI.toast('获取模型失败：'+e.message);
+      } catch (e) {
+        UI.toast('获取模型失败：' + e.message);
       }
     },
-    render(panel, list, type = 'translate'){
+    render(panel, list, type = 'translate') {
       const boxId = type === 'translate' ? '#ao3x-translate-model-list' : '#ao3x-summary-model-list';
       const box = $(boxId, panel);
-      box.innerHTML='';
-      list.forEach(m=>{
-        const div=document.createElement('div');
-        div.className='ao3x-model-item';
-        div.textContent=m.id||m.name||JSON.stringify(m);
-        div.addEventListener('click', ()=>{
+      box.innerHTML = '';
+      list.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'ao3x-model-item';
+        div.textContent = m.id || m.name || JSON.stringify(m);
+        div.addEventListener('click', () => {
           this.selectModel(panel, m.id || m.name, type);
         });
         box.appendChild(div);
       });
     },
-    selectModel(panel, modelId, type){
+    selectModel(panel, modelId, type) {
       if (type === 'translate') {
         // 设置翻译模型
         $('#ao3x-translate-model', panel).value = modelId;
@@ -2485,11 +2455,11 @@
       settings.set(collectPanelValues(panel));
       saveToast();
     },
-    filter(panel, type = null){
+    filter(panel, type = null) {
       const actualType = type || this.currentType;
       const queryId = actualType === 'translate' ? '#ao3x-translate-model-q' : '#ao3x-summary-model-q';
-      const q = ($(queryId, panel).value||'').toLowerCase();
-      const list = !q ? this.all : this.all.filter(m=>(m.id||'').toLowerCase().includes(q));
+      const q = ($(queryId, panel).value || '').toLowerCase();
+      const list = !q ? this.all : this.all.filter(m => (m.id || '').toLowerCase().includes(q));
       this.render(panel, list, actualType);
     }
   };
@@ -2523,10 +2493,10 @@
             this._map = dataLS._map || Object.create(null);
             this._done = dataLS._done || Object.create(null);
             // 迁移到 GM，并清理 LS
-            try { GM_Set(this._cacheKey, { _map: this._map, _done: this._done, timestamp: Date.now() }); } catch {}
-            try { localStorage.removeItem(this._cacheKey); } catch {}
+            try { GM_Set(this._cacheKey, { _map: this._map, _done: this._done, timestamp: Date.now() }); } catch { }
+            try { localStorage.removeItem(this._cacheKey); } catch { }
           }
-        } catch {}
+        } catch { }
       } catch (e) {
         console.warn('Failed to load translation cache:', e);
       }
@@ -2571,8 +2541,8 @@
           const dataLS = JSON.parse(cached);
           const map = dataLS._map || {};
           if (Object.keys(map).length > 0) {
-            try { GM_Set(this._cacheKey, { _map: map, _done: dataLS._done || {}, timestamp: Date.now() }); } catch {}
-            try { localStorage.removeItem(this._cacheKey); } catch {}
+            try { GM_Set(this._cacheKey, { _map: map, _done: dataLS._done || {}, timestamp: Date.now() }); } catch { }
+            try { localStorage.removeItem(this._cacheKey); } catch { }
             return true;
           }
           return false;
@@ -2606,8 +2576,8 @@
           const map = dataLS._map || {};
           const done = dataLS._done || {};
           // 迁移
-          try { GM_Set(this._cacheKey, { _map: map, _done: done, timestamp: Date.now() }); } catch {}
-          try { localStorage.removeItem(this._cacheKey); } catch {}
+          try { GM_Set(this._cacheKey, { _map: map, _done: done, timestamp: Date.now() }); } catch { }
+          try { localStorage.removeItem(this._cacheKey); } catch { }
           return {
             hasCache: Object.keys(map).length > 0,
             total: Object.keys(map).length,
@@ -2621,24 +2591,24 @@
       }
     },
 
-    set(i, html){
+    set(i, html) {
       this._map[i] = html;
       this.saveToCache(); // 自动保存
     },
 
-    get(i){ return this._map[i] || ''; },
+    get(i) { return this._map[i] || ''; },
 
-    markDone(i){
+    markDone(i) {
       this._done[i] = true;
       this.saveToCache(); // 自动保存
     },
 
-    allDone(total){
-      for(let k=0;k<total;k++){ if(!this._done[k]) return false; }
+    allDone(total) {
+      for (let k = 0; k < total; k++) { if (!this._done[k]) return false; }
       return true;
     },
 
-    clear(){
+    clear() {
       this._map = Object.create(null);
       this._done = Object.create(null);
     }
@@ -2666,15 +2636,15 @@
     nextToRender: 0, total: 0, lastApplied: Object.create(null),
     _pendingUpdates: new Map(), // 批处理待更新的内容
     _updateScheduled: false,
-    setTotal(n){ this.total = n; this.nextToRender = 0; this.lastApplied = Object.create(null); },
-    canRender(i){ return i === this.nextToRender; },
-    applyIncremental(i, cleanHtml){
+    setTotal(n) { this.total = n; this.nextToRender = 0; this.lastApplied = Object.create(null); },
+    canRender(i) { return i === this.nextToRender; },
+    applyIncremental(i, cleanHtml) {
       const c = ensureRenderContainer();
-      const anchor = c.querySelector(`[data-chunk-id="${i}"]`); if(!anchor) return;
+      const anchor = c.querySelector(`[data-chunk-id="${i}"]`); if (!anchor) return;
       let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
-      if(!transDiv){
-        transDiv=document.createElement('div');
-        transDiv.className='ao3x-translation';
+      if (!transDiv) {
+        transDiv = document.createElement('div');
+        transDiv.className = 'ao3x-translation';
         // 设置最小高度防止容器跳动
         transDiv.style.minHeight = '60px';
         anchor.insertAdjacentElement('afterend', transDiv);
@@ -2712,7 +2682,7 @@
         this.lastApplied[i] = cleanHtml;
       }
     },
-    _scheduleUpdate(){
+    _scheduleUpdate() {
       if (this._updateScheduled) return;
       this._updateScheduled = true;
       requestAnimationFrame(() => {
@@ -2720,7 +2690,7 @@
         this._updateScheduled = false;
       });
     },
-    _flushUpdates(){
+    _flushUpdates() {
       // 批量处理所有待更新的DOM操作，减少reflow
       for (const [i, update] of this._pendingUpdates.entries()) {
         const { transDiv, cleanHtml, tail, mode } = update;
@@ -2733,11 +2703,11 @@
       }
       this._pendingUpdates.clear();
     },
-    finalizeCurrent(){
+    finalizeCurrent() {
       // Advance rendering pointer and drain any already-finished chunks in order.
       while (this.nextToRender < this.total) {
         const i = this.nextToRender;
-        const live = (typeof Streamer!=='undefined' && Streamer.getCleanNow)
+        const live = (typeof Streamer !== 'undefined' && Streamer.getCleanNow)
           ? Streamer.getCleanNow(i) : '';
         const cached = TransStore.get(String(i)) || '';
         const best = live || cached;
@@ -2757,9 +2727,9 @@
   const View = {
     mode: 'trans',
     _isShowingCache: false,
-    ensure(){ return ensureRenderContainer(); },
-    info(msg){ let n=$('#ao3x-info'); if(!n){ n=document.createElement('div'); n.id='ao3x-info'; n.className='ao3x-small'; this.ensure().prepend(n); } n.textContent=msg; },
-    clearInfo(){ const n=$('#ao3x-info'); if(n) n.remove(); },
+    ensure() { return ensureRenderContainer(); },
+    info(msg) { let n = $('#ao3x-info'); if (!n) { n = document.createElement('div'); n.id = 'ao3x-info'; n.className = 'ao3x-small'; this.ensure().prepend(n); } n.textContent = msg; },
+    clearInfo() { const n = $('#ao3x-info'); if (n) n.remove(); },
 
     // 检查是否正在显示缓存
     isShowingCache() {
@@ -2770,46 +2740,46 @@
     setShowingCache(showing) {
       this._isShowingCache = showing;
     },
-    setMode(m){
+    setMode(m) {
       // 只在显示缓存时禁用双语对照模式
       if (m === 'bi' && this.isShowingCache()) {
         m = 'trans'; // 强制切换到译文模式
         UI.toast('显示缓存时双语对照功能已禁用');
       }
-      this.mode=m; this.applyHostVisibility(); this.refresh(true);
+      this.mode = m; this.applyHostVisibility(); this.refresh(true);
     },
-    applyHostVisibility(){ 
-      const container = this.ensure(); 
-      if(this.mode==='trans' || this.mode==='bi'){ 
-        SelectedNodes.forEach(n=> n.style.display='none'); 
-        container.style.display=''; 
-      } else if(this.mode==='orig') {
+    applyHostVisibility() {
+      const container = this.ensure();
+      if (this.mode === 'trans' || this.mode === 'bi') {
+        SelectedNodes.forEach(n => n.style.display = 'none');
+        container.style.display = '';
+      } else if (this.mode === 'orig') {
         // 原文模式：隐藏原始节点，但保持容器可见（用于双击检测）
-        SelectedNodes.forEach(n=> n.style.display='none'); 
-        container.style.display=''; 
-      } else { 
-        SelectedNodes.forEach(n=> n.style.display=''); 
-        container.style.display='none'; 
-      } 
+        SelectedNodes.forEach(n => n.style.display = 'none');
+        container.style.display = '';
+      } else {
+        SelectedNodes.forEach(n => n.style.display = '');
+        container.style.display = 'none';
+      }
     },
-    refresh(initial=false){
-      if(this.mode==='bi' && Bilingual.canRender()){ this.renderBilingual(); return; }
-      if(this.mode==='summary'){ this.renderSummary(); return; }
-      const c=this.ensure();
+    refresh(initial = false) {
+      if (this.mode === 'bi' && Bilingual.canRender()) { this.renderBilingual(); return; }
+      if (this.mode === 'summary') { this.renderSummary(); return; }
+      const c = this.ensure();
       if (initial) {
         const next = RenderState.nextToRender || 0;
-        c.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)').forEach(block=>{
+        c.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)').forEach(block => {
           const idxStr = block.getAttribute('data-index');
           const i = Number(idxStr);
           const orig = block.getAttribute('data-original-html') || '';
-          if(this.mode==='trans'){
+          if (this.mode === 'trans') {
             let contentHTML = '';
             if (i < next) {
               // Already rendered; keep lastApplied or cached
               contentHTML = (RenderState.lastApplied[i]) || TransStore.get(idxStr) || '';
             } else if (i === next) {
               // Current chunk: show live snapshot if any, else cached, else placeholder
-              const live = (typeof Streamer!=='undefined' && Streamer.getCleanNow) ? Streamer.getCleanNow(i) : '';
+              const live = (typeof Streamer !== 'undefined' && Streamer.getCleanNow) ? Streamer.getCleanNow(i) : '';
               contentHTML = live || TransStore.get(idxStr) || '';
             } else {
               // 对于缓存加载，显示所有已缓存的翻译
@@ -2821,7 +2791,7 @@
             if (typeof RenderState !== 'undefined' && RenderState.lastApplied) {
               if (i <= next) RenderState.lastApplied[i] = contentHTML || '';
             }
-          } else if(this.mode==='orig'){
+          } else if (this.mode === 'orig') {
             block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idxStr}"></span>${orig}`;
           }
           // 确保 data-index 和 data-original-html 属性被保留
@@ -2830,7 +2800,7 @@
         });
       }
     },
-    renderSummary(){
+    renderSummary() {
       const c = this.ensure();
       // 查找总结专用的块容器
       const summaryBlocks = Array.from(c.querySelectorAll('.ao3x-summary-block'));
@@ -2863,14 +2833,14 @@
         block.innerHTML = `<span class="ao3x-anchor" data-summary-chunk-id="${idx}"></span>${html}`;
       });
     },
-    renderBilingual(){
-      const c=this.ensure(); const blocks = Array.from(c.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)'));
-      blocks.forEach(block=>{
+    renderBilingual() {
+      const c = this.ensure(); const blocks = Array.from(c.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)'));
+      blocks.forEach(block => {
         const idx = block.getAttribute('data-index');
         const orig = block.getAttribute('data-original-html') || '';
         const trans = TransStore.get(idx);
         const pairs = Bilingual.pairByParagraph(orig, trans);
-        const html = pairs.map(p => `<div class="ao3x-pair"><div class="orig">${p.orig}</div><div class="trans">${p.trans||'<span class="ao3x-muted">（无对应段落）</span>'}</div></div>`).join('');
+        const html = pairs.map(p => `<div class="ao3x-pair"><div class="orig">${p.orig}</div><div class="trans">${p.trans || '<span class="ao3x-muted">（无对应段落）</span>'}</div></div>`).join('');
 
         // 直接更新 innerHTML，移除 requestAnimationFrame 以避免异步问题
         block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idx}"></span>${html}`;
@@ -2879,13 +2849,13 @@
         if (orig) block.setAttribute('data-original-html', orig);
       });
     },
-    setBlockTranslation(idx, html){
+    setBlockTranslation(idx, html) {
       TransStore.set(String(idx), html);
       if (RenderState.canRender(Number(idx))) {
         RenderState.applyIncremental(Number(idx), html);
       }
       // 只在显示缓存时禁用双语对照功能
-      if(this.mode==='bi' && Bilingual.canRender() && this.isShowingCache()){
+      if (this.mode === 'bi' && Bilingual.canRender() && this.isShowingCache()) {
         this.mode = 'trans';
         UI.toast('显示缓存时双语对照功能已禁用');
         this.refresh(true);
@@ -2900,26 +2870,26 @@
     },
   };
   const Bilingual = {
-    canRender(){ return this._total != null && TransStore.allDone(this._total); },
-    setTotal(n){ this._total = n; }, _total: null,
-    splitParagraphs(html){
+    canRender() { return this._total != null && TransStore.allDone(this._total); },
+    setTotal(n) { this._total = n; }, _total: null,
+    splitParagraphs(html) {
       const div = document.createElement('div'); div.innerHTML = html; const out = [];
       // 处理所有块级元素，包括blockquote
-      div.querySelectorAll('p, div, li, pre, blockquote').forEach(el=>{
-        const text=(el.textContent||'').trim();
-        if(!text) return;
+      div.querySelectorAll('p, div, li, pre, blockquote').forEach(el => {
+        const text = (el.textContent || '').trim();
+        if (!text) return;
         // 检查是否在其他块级元素内部，避免重复处理
-        if(el.closest('p, div, li, pre, blockquote') && !el.parentElement?.isEqualNode(div)) return;
+        if (el.closest('p, div, li, pre, blockquote') && !el.parentElement?.isEqualNode(div)) return;
         out.push(el.outerHTML);
       });
 
-      if(!out.length){
-        const raw=(div.innerHTML||'').split(/<br\s*\/?>/i).map(x=>x.trim()).filter(Boolean);
-        return raw.map(x=>`<p>${x}</p>`);
+      if (!out.length) {
+        const raw = (div.innerHTML || '').split(/<br\s*\/?>/i).map(x => x.trim()).filter(Boolean);
+        return raw.map(x => `<p>${x}</p>`);
       }
       return out;
     },
-    pairByParagraph(origHTML, transHTML){ const o=this.splitParagraphs(origHTML); const t=this.splitParagraphs(transHTML); const m=Math.max(o.length,t.length); const pairs=new Array(m); for(let i=0;i<m;i++){ pairs[i]={orig:o[i]||'',trans:t[i]||''}; } return pairs; }
+    pairByParagraph(origHTML, transHTML) { const o = this.splitParagraphs(origHTML); const t = this.splitParagraphs(transHTML); const m = Math.max(o.length, t.length); const pairs = new Array(m); for (let i = 0; i < m; i++) { pairs[i] = { orig: o[i] || '', trans: t[i] || '' }; } return pairs; }
   };
 
   /* ================= Chunk Indicator ================= */
@@ -2935,7 +2905,7 @@
       showPreview: false,  // 默认不显示预览文本
       duration: 1000       // 显示时长 1 秒
     },
-    
+
     _resolveContainer(hint) {
       const tryResolveFromNode = (node) => {
         if (!node) return null;
@@ -3005,7 +2975,7 @@
         }
         return;
       }
-      
+
       // 重置重试计数器
       this._retryCount = 0;
       const previousContainer = this._container;
@@ -3063,17 +3033,17 @@
       // 读取分块编号
       const chunkIndex = block.getAttribute('data-index');
       d('ChunkIndicator: chunk index', chunkIndex);
-      
+
       if (chunkIndex === null) {
         d('ChunkIndicator: no chunk index');
         return;
       }
-      
+
       // 仅在设置开启时获取预览文本
-      const previewText = this.settings.showPreview 
-        ? this.getPreviewText(parseInt(chunkIndex, 10)) 
+      const previewText = this.settings.showPreview
+        ? this.getPreviewText(parseInt(chunkIndex, 10))
         : null;
-      
+
       // 显示弹窗
       d('ChunkIndicator: showing popup for chunk', chunkIndex);
       this.showPopup(chunkIndex, previewText);
@@ -3164,23 +3134,23 @@
       if (typeof clientX !== 'number' || typeof clientY !== 'number') return false;
       return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     },
-    
+
     showPopup(chunkIndex, previewText) {
       // 清除之前的定时器
       if (this._hideTimer) {
         clearTimeout(this._hideTimer);
       }
-      
+
       // 创建弹窗（如果不存在）
       if (!this._popup) {
         this._popup = document.createElement('div');
         this._popup.className = 'ao3x-chunk-popup';
         document.body.appendChild(this._popup);
       }
-      
+
       // 构建弹窗内容
       let content = `<div class="ao3x-chunk-popup-number">#${chunkIndex}</div>`;
-      
+
       // 仅在开启预览时显示
       if (previewText && this.settings.showPreview) {
         content += `
@@ -3190,21 +3160,21 @@
           </div>
         `;
       }
-      
+
       // 更新内容
       this._popup.innerHTML = content;
       this._popup.classList.remove('hiding');
-      
+
       // 1 秒后自动隐藏
       this._hideTimer = setTimeout(() => this.hidePopup(), this.settings.duration);
     },
-    
+
     hidePopup() {
       if (!this._popup) return;
-      
+
       // 添加淡出动画类
       this._popup.classList.add('hiding');
-      
+
       // 等待动画完成后移除
       setTimeout(() => {
         if (this._popup && this._popup.parentNode) {
@@ -3213,31 +3183,31 @@
         }
       }, 200);
     },
-    
+
     getPreviewText(chunkIndex) {
       // 从 PlanStore 获取分块的原始 HTML
-      const html = (typeof PlanStore !== 'undefined' && PlanStore.get) 
-        ? PlanStore.get(chunkIndex) 
+      const html = (typeof PlanStore !== 'undefined' && PlanStore.get)
+        ? PlanStore.get(chunkIndex)
         : '';
-      
+
       if (!html) return null;
-      
+
       // 转换为纯文本
       const text = stripHtmlToText(html);
       const cleanText = text.replace(/\s+/g, ' ').trim();
-      
+
       // 提取开头和结尾
       const startText = cleanText.slice(0, 50);
       const endText = cleanText.slice(-50);
-      
+
       return { startText, endText };
     }
   };
 
-  function renderPlanAnchors(plan){
-    const c = ensureRenderContainer(); c.innerHTML='';
-    const box = document.createElement('div'); box.id='ao3x-plan'; box.className='ao3x-plan'; c.appendChild(box);
-    const rows = plan.map((p,i)=>{
+  function renderPlanAnchors(plan) {
+    const c = ensureRenderContainer(); c.innerHTML = '';
+    const box = document.createElement('div'); box.id = 'ao3x-plan'; box.className = 'ao3x-plan'; c.appendChild(box);
+    const rows = plan.map((p, i) => {
       const estIn = p.inTok != null ? p.inTok : 0;
       return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button><b>块 #${i}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
     }).join('');
@@ -3272,11 +3242,11 @@
     updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
 
     PlanStore.clear();
-    plan.forEach((p,i)=>{
-      const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
+    plan.forEach((p, i) => {
+      const wrapper = document.createElement('div'); wrapper.className = 'ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
       PlanStore.set(i, p.html);
-      const anchor=document.createElement('span'); anchor.className='ao3x-anchor'; anchor.setAttribute('data-chunk-id', String(i)); wrapper.appendChild(anchor);
-      const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
+      const anchor = document.createElement('span'); anchor.className = 'ao3x-anchor'; anchor.setAttribute('data-chunk-id', String(i)); wrapper.appendChild(anchor);
+      const div = document.createElement('div'); div.className = 'ao3x-translation'; div.innerHTML = '<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
       c.appendChild(wrapper);
     });
@@ -3285,17 +3255,17 @@
       ChunkIndicator.init();
     }
   }
-  function appendPlanAnchorsFrom(plan, startIndex){
+  function appendPlanAnchorsFrom(plan, startIndex) {
     const c = ensureRenderContainer();
     let box = c.querySelector('#ao3x-plan');
-    if (!box){ box=document.createElement('div'); box.id='ao3x-plan'; box.className='ao3x-plan'; c.prepend(box); }
+    if (!box) { box = document.createElement('div'); box.id = 'ao3x-plan'; box.className = 'ao3x-plan'; c.prepend(box); }
 
     // 保存当前折叠状态
     const oldBody = box.querySelector('.ao3x-plan-body');
     const wasCollapsed = oldBody && oldBody.classList.contains('collapsed');
 
     // Update plan header count
-    const rows = plan.slice(startIndex).map((p,i)=>{
+    const rows = plan.slice(startIndex).map((p, i) => {
       const idx = startIndex + i;
       const estIn = p.inTok != null ? p.inTok : 0;
       return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${idx}" title="跳转到块 #${idx}">📍</button><b>块 #${idx}</b><span class="ao3x-small">~${estIn} tokens</span></div>`;
@@ -3310,7 +3280,7 @@
         <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
       </div>
     `;
-    const fixed = Array.from(box.querySelectorAll('.row')).slice(0, startIndex).map(n=>n.outerHTML).join('');
+    const fixed = Array.from(box.querySelectorAll('.row')).slice(0, startIndex).map(n => n.outerHTML).join('');
 
     // 不要在这里创建 KV 容器字符串，直接在 innerHTML 中嵌入
     box.innerHTML = `<div class="ao3x-plan-header">${headHtml}</div><div class="ao3x-plan-body${wasCollapsed ? ' collapsed' : ''}"><div class="ao3x-plan-controls">${controls}</div><div class="ao3x-plan-rows">${fixed}${rows}</div><div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div></div>`;
@@ -3322,13 +3292,13 @@
     // 重新绑定控制按钮事件
     bindBlockControlEvents(box);
 
-    for (let i=startIndex; i<plan.length; i++){
+    for (let i = startIndex; i < plan.length; i++) {
       if (c.querySelector(`[data-chunk-id="${i}"]`)) continue; // already exists
       const p = plan[i];
-      const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
+      const wrapper = document.createElement('div'); wrapper.className = 'ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
       PlanStore.set(i, p.html);
-      const anchor=document.createElement('span'); anchor.className='ao3x-anchor'; anchor.setAttribute('data-chunk-id', String(i)); wrapper.appendChild(anchor);
-      const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
+      const anchor = document.createElement('span'); anchor.className = 'ao3x-anchor'; anchor.setAttribute('data-chunk-id', String(i)); wrapper.appendChild(anchor);
+      const div = document.createElement('div'); div.className = 'ao3x-translation'; div.innerHTML = '<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
       c.appendChild(wrapper);
     }
@@ -3339,14 +3309,14 @@
   }
 
   /* ================= Planner helpers (dynamic coalesce) ================= */
-  async function coalescePlanForRemaining(plan, startIndex, budgetTokens){
+  async function coalescePlanForRemaining(plan, startIndex, budgetTokens) {
     // 把“未开始”的块尽量合并，减少请求次数
     const remain = plan.slice(startIndex).map(x => x.html);
     if (!remain.length) return plan;
     const packed = await packIntoChunks(remain, budgetTokens);
     // 重新编号并拼回
     const head = plan.slice(0, startIndex);
-    const reindexed = packed.map((p, idx) => ({...p, index: head.length + idx}));
+    const reindexed = packed.map((p, idx) => ({ ...p, index: head.length + idx }));
     return head.concat(reindexed);
   }
 
@@ -3407,7 +3377,7 @@
     if (container._jumpClickHandler) {
       container.removeEventListener('click', container._jumpClickHandler);
     }
-    
+
     // 创建新的事件处理器并保存引用
     container._jumpClickHandler = (event) => {
       const jumpBtn = event.target.closest('.ao3x-jump-btn');
@@ -3418,7 +3388,7 @@
       if (!Number.isFinite(index)) return;
       scrollToChunkStart(index);
     };
-    
+
     container.addEventListener('click', container._jumpClickHandler);
     d('bindBlockControlEvents:bound', { containerId: container.id });
   }
@@ -3826,8 +3796,8 @@
 
       // 尝试多种章节名选择器
       const chapterElement = document.querySelector('.chapter.preface.group h3.title a') ||
-                           document.querySelector('.chapter h3.title a') ||
-                           document.querySelector('h3.title a');
+        document.querySelector('.chapter h3.title a') ||
+        document.querySelector('h3.title a');
       const chapterTitle = chapterElement ? chapterElement.textContent.trim() : '未知章节';
 
       return {
@@ -3884,21 +3854,21 @@
     async batchDownloadChapters() {
       try {
         UI.toast('正在获取已翻译章节列表...');
-        
+
         const chapters = await this.getTranslatedChapters();
         if (!chapters || chapters.length === 0) {
           UI.toast('没有找到已翻译的章节');
           return;
         }
-        
+
         if (chapters.length === 1) {
           UI.toast('只有一个已翻译章节，使用普通下载即可');
           return;
         }
-        
+
         // 显示章节选择对话框
         this.showChapterSelectionDialog(chapters);
-        
+
       } catch (e) {
         console.error('[AO3X] Batch download failed:', e);
         UI.toast('批量下载失败：' + e.message);
@@ -3929,9 +3899,9 @@
           </div>
         </div>
       `;
-      
+
       document.body.appendChild(dialog);
-      
+
       // 填充章节列表
       const listContainer = dialog.querySelector('#ao3x-chapter-list');
       chapters.forEach((chapter, index) => {
@@ -3943,33 +3913,33 @@
         `;
         listContainer.appendChild(item);
       });
-      
+
       // 绑定事件
       dialog.querySelector('.ao3x-chapter-dialog-close').addEventListener('click', () => {
         dialog.remove();
       });
-      
+
       dialog.querySelector('#ao3x-chapter-cancel').addEventListener('click', () => {
         dialog.remove();
       });
-      
+
       dialog.querySelector('#ao3x-chapter-select-all').addEventListener('click', () => {
         dialog.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
       });
-      
+
       dialog.querySelector('#ao3x-chapter-select-none').addEventListener('click', () => {
         dialog.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
       });
-      
+
       dialog.querySelector('#ao3x-chapter-download').addEventListener('click', async () => {
         const selectedIds = Array.from(dialog.querySelectorAll('input[type="checkbox"]:checked'))
           .map(cb => cb.value);
-        
+
         if (selectedIds.length === 0) {
           UI.toast('请至少选择一个章节');
           return;
         }
-        
+
         dialog.remove();
         await this.downloadSelectedChapters(chapters.filter(c => selectedIds.includes(c.id)));
       });
@@ -3979,22 +3949,22 @@
     async downloadSelectedChapters(selectedChapters) {
       try {
         UI.toast(`正在下载 ${selectedChapters.length} 个章节...`);
-        
+
         const info = this.getWorkInfo();
         const workTitle = info.workTitle || '作品';
-        
+
         let fullText = '';
-        
+
         for (const chapter of selectedChapters) {
           fullText += `\n\n========== Chapter ${chapter.id} ==========\n\n`;
-          
+
           const cacheData = chapter.cacheData;
           const total = Object.keys(cacheData._map || {}).length;
-          
+
           for (let i = 0; i < total; i++) {
             const translation = cacheData._map[String(i)];
             if (!translation) continue;
-            
+
             let plain = '';
             try {
               if (this.extractTextWithStructure) {
@@ -4004,51 +3974,51 @@
                 div.innerHTML = translation;
                 plain = (div.textContent || '').replace(/\r?\n/g, '\n').trim();
               }
-            } catch (_) {}
-            
+            } catch (_) { }
+
             if (plain) fullText += plain + '\n\n';
           }
         }
-        
+
         fullText = fullText.trim();
         if (!fullText) {
           UI.toast('翻译内容为空');
           return;
         }
-        
+
         const fileName = `${workTitle}-批量下载-${selectedChapters.length}章.txt`;
-        
+
         // 使用与单章下载相同的逻辑
         const s = settings.get();
         const WORKER_ORIGIN = s.download?.workerUrl || '';
         const ua = navigator.userAgent || '';
         const hasEvansToken = /\bEvansBrowser\/\d+(?:\.\d+)*\b/i.test(ua);
         const shouldUseCloud = hasEvansToken;
-        
+
         if (shouldUseCloud) {
           UI.toast('1/2 上传到云端…');
           const body = new URLSearchParams();
           body.set('text', fullText);
           body.set('filename', fileName);
-          
+
           const res = await fetch(`${WORKER_ORIGIN}/api/upload`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body
           });
-          
+
           if (!res.ok) {
             const err = await res.text().catch(() => res.statusText);
             UI.toast('上传失败：' + err);
             return;
           }
-          
+
           const data = await res.json().catch(() => null);
           if (!data || !data.url) {
             UI.toast('上传返回无下载链接');
             return;
           }
-          
+
           UI.toast('2/2 跳转下载…');
           location.href = data.url;
         } else {
@@ -4056,120 +4026,120 @@
           downloadBlob(blob, fileName);
           UI.toast(`已下载 ${fileName}`);
         }
-        
+
       } catch (e) {
         console.error('[AO3X] Download selected chapters failed:', e);
         UI.toast('下载失败：' + e.message);
       }
     },
 
-// 下载翻译为TXT文件（完整替换此函数）
-downloadTranslation() {
-  // 1) 基本检查
-  const cacheInfo = TransStore.getCacheInfo && TransStore.getCacheInfo();
-  if (!cacheInfo || !cacheInfo.hasCache || !cacheInfo.completed) {
-    UI.toast('没有可下载的翻译内容');
-    return;
-  }
-
-  // 2) 生成文件名
-  const info = this.getWorkInfo ? this.getWorkInfo() : {};
-  const workTitle = (info && info.workTitle) || '作品';
-  const chapterTitle = (info && info.chapterTitle) || '章节';
-  const fileName = `${workTitle}-${chapterTitle}.txt`;
-
-  // 3) 汇总正文
-  let fullText = '';
-  const total = cacheInfo.total || 0;
-  for (let i = 0; i < total; i++) {
-    const translation = TransStore.get && TransStore.get(String(i));
-    if (!translation) continue;
-
-    let plain = '';
-    try {
-      if (this.extractTextWithStructure) {
-        plain = this.extractTextWithStructure(translation) || '';
-      } else {
-        const div = document.createElement('div');
-        div.innerHTML = translation;
-        plain = (div.textContent || '').replace(/\r?\n/g, '\n').trim();
+    // 下载翻译为TXT文件（完整替换此函数）
+    downloadTranslation() {
+      // 1) 基本检查
+      const cacheInfo = TransStore.getCacheInfo && TransStore.getCacheInfo();
+      if (!cacheInfo || !cacheInfo.hasCache || !cacheInfo.completed) {
+        UI.toast('没有可下载的翻译内容');
+        return;
       }
-    } catch (_) {}
-    if (plain) fullText += plain + '\n\n';
-  }
-  fullText = fullText.trim();
-  if (!fullText) {
-    UI.toast('翻译内容为空');
-    return;
-  }
 
-  // 4) EvansBrowser / iOS Safari 家族 → 走云端“两步法”（POST→GET）；其他浏览器保留 Blob
-  const s = settings.get();
-  const WORKER_ORIGIN = s.download?.workerUrl || '';
+      // 2) 生成文件名
+      const info = this.getWorkInfo ? this.getWorkInfo() : {};
+      const workTitle = (info && info.workTitle) || '作品';
+      const chapterTitle = (info && info.chapterTitle) || '章节';
+      const fileName = `${workTitle}-${chapterTitle}.txt`;
 
-// —— 只针对 EvansBrowser，其他一律走 Blob ——
-// 你给的精确 UA（可留作备用精确等号匹配）
-const EVANS_FULL =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ' +
-  'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 ' +
-  'Mobile/15E148 Safari/604.1 EvansBrowser/1.0';
+      // 3) 汇总正文
+      let fullText = '';
+      const total = cacheInfo.total || 0;
+      for (let i = 0; i < total; i++) {
+        const translation = TransStore.get && TransStore.get(String(i));
+        if (!translation) continue;
 
-const ua = navigator.userAgent || '';
+        let plain = '';
+        try {
+          if (this.extractTextWithStructure) {
+            plain = this.extractTextWithStructure(translation) || '';
+          } else {
+            const div = document.createElement('div');
+            div.innerHTML = translation;
+            plain = (div.textContent || '').replace(/\r?\n/g, '\n').trim();
+          }
+        } catch (_) { }
+        if (plain) fullText += plain + '\n\n';
+      }
+      fullText = fullText.trim();
+      if (!fullText) {
+        UI.toast('翻译内容为空');
+        return;
+      }
 
-// 条件1：包含 EvansBrowser/<版本号>（推荐）
-const hasEvansToken = /\bEvansBrowser\/\d+(?:\.\d+)*\b/i.test(ua);
+      // 4) EvansBrowser / iOS Safari 家族 → 走云端“两步法”（POST→GET）；其他浏览器保留 Blob
+      const s = settings.get();
+      const WORKER_ORIGIN = s.download?.workerUrl || '';
 
-// 条件2：精确等号匹配整串（可选补充，避免极端裁剪导致 token 丢失时你仍能识别）
-const isExactEvansUA = ua.trim() === EVANS_FULL;
+      // —— 只针对 EvansBrowser，其他一律走 Blob ——
+      // 你给的精确 UA（可留作备用精确等号匹配）
+      const EVANS_FULL =
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ' +
+        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 ' +
+        'Mobile/15E148 Safari/604.1 EvansBrowser/1.0';
 
-// 最终：只有 Evans 才用云端两步法
-const shouldUseCloud = hasEvansToken || isExactEvansUA;
+      const ua = navigator.userAgent || '';
 
-  if (shouldUseCloud) {
-    // —— 两步法：1) POST 文本到 /api/upload → 2) 跳转到返回的 GET 下载链接 ——
-    (async () => {
+      // 条件1：包含 EvansBrowser/<版本号>（推荐）
+      const hasEvansToken = /\bEvansBrowser\/\d+(?:\.\d+)*\b/i.test(ua);
+
+      // 条件2：精确等号匹配整串（可选补充，避免极端裁剪导致 token 丢失时你仍能识别）
+      const isExactEvansUA = ua.trim() === EVANS_FULL;
+
+      // 最终：只有 Evans 才用云端两步法
+      const shouldUseCloud = hasEvansToken || isExactEvansUA;
+
+      if (shouldUseCloud) {
+        // —— 两步法：1) POST 文本到 /api/upload → 2) 跳转到返回的 GET 下载链接 ——
+        (async () => {
+          try {
+            UI.toast('1/2 上传到云端…');
+            const body = new URLSearchParams();
+            body.set('text', fullText);
+            body.set('filename', fileName);
+
+            const res = await fetch(`${WORKER_ORIGIN}/api/upload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body
+            });
+
+            if (!res.ok) {
+              const err = await res.text().catch(() => res.statusText);
+              UI.toast('上传失败：' + err);
+              return;
+            }
+
+            const data = await res.json().catch(() => null);
+            if (!data || !data.url) {
+              UI.toast('上传返回无下载链接');
+              return;
+            }
+
+            UI.toast('2/2 跳转下载…');
+            location.href = data.url; // 导航到 GET 链接触发下载
+          } catch (e) {
+            UI.toast('异常：' + (e && e.message ? e.message : String(e)));
+          }
+        })();
+        return; // 重要：不要再继续走到 Blob 分支
+      }
+
+      // 5) 其他浏览器：使用 Safari 兼容的下载
       try {
-        UI.toast('1/2 上传到云端…');
-        const body = new URLSearchParams();
-        body.set('text', fullText);
-        body.set('filename', fileName);
-
-        const res = await fetch(`${WORKER_ORIGIN}/api/upload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body
-        });
-
-        if (!res.ok) {
-          const err = await res.text().catch(() => res.statusText);
-          UI.toast('上传失败：' + err);
-          return;
-        }
-
-        const data = await res.json().catch(() => null);
-        if (!data || !data.url) {
-          UI.toast('上传返回无下载链接');
-          return;
-        }
-
-        UI.toast('2/2 跳转下载…');
-        location.href = data.url; // 导航到 GET 链接触发下载
+        const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+        downloadBlob(blob, fileName);
+        UI.toast(`已下载 ${fileName}`);
       } catch (e) {
-        UI.toast('异常：' + (e && e.message ? e.message : String(e)));
+        UI.toast('本地下载失败：' + (e && e.message ? e.message : String(e)));
       }
-    })();
-    return; // 重要：不要再继续走到 Blob 分支
-  }
-
-  // 5) 其他浏览器：使用 Safari 兼容的下载
-  try {
-    const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-    downloadBlob(blob, fileName);
-    UI.toast(`已下载 ${fileName}`);
-  } catch (e) {
-    UI.toast('本地下载失败：' + (e && e.message ? e.message : String(e)));
-  }
-},
+    },
 
     // 智能提取文本，保留段落结构
     extractTextWithStructure(html) {
@@ -4236,19 +4206,19 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     },
 
     // 直接应用到已有 DOM（不受顺序指针限制），用于重试/修复历史块
-    applyDirect(i, html){
+    applyDirect(i, html) {
       const c = document.querySelector('#ao3x-render'); if (!c) return;
       const anchor = c.querySelector(`[data-chunk-id="${i}"]`); if (!anchor) return;
       let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
-      if (!transDiv) { transDiv = document.createElement('div'); transDiv.className='ao3x-translation'; anchor.insertAdjacentElement('afterend', transDiv); }
+      if (!transDiv) { transDiv = document.createElement('div'); transDiv.className = 'ao3x-translation'; anchor.insertAdjacentElement('afterend', transDiv); }
       transDiv.innerHTML = html || '<span class="ao3x-muted">（待译）</span>';
       if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = html || '';
     },
 
     // 收集“未完成/失败”的索引
-    collectIncompleteIndices(){
+    collectIncompleteIndices() {
       const total = RenderState.total || 0; const out = [];
-      for (let i=0;i<total;i++){
+      for (let i = 0; i < total; i++) {
         const done = !!(TransStore._done && TransStore._done[i]);
         const html = TransStore.get(String(i)) || '';
         const failed = /\[该段失败：|\[请求失败：/.test(html);
@@ -4258,7 +4228,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     },
 
     // 重试选中的块（手动选择）
-    async retrySelectedBlocks(selectedIndices){
+    async retrySelectedBlocks(selectedIndices) {
       const normalized = Array.from(new Set((selectedIndices || []).map(i => Number(i)).filter(i => Number.isInteger(i) && i >= 0))).sort((a, b) => a - b);
       if (!normalized.length) {
         UI.toast('未选择要重试的块');
@@ -4343,8 +4313,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const payload = {
           model: s.model.id,
           messages: [
-            { role:'system', content: s.prompt.system },
-            { role:'user',   content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
+            { role: 'system', content: s.prompt.system },
+            { role: 'user', content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
           ],
           temperature: s.gen.temperature,
           max_tokens: s.gen.maxTokens,
@@ -4379,7 +4349,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             });
           },
           onFinishReason: (fr) => {
-            d('retry-selected:finish_reason', {idx, fr});
+            d('retry-selected:finish_reason', { idx, fr });
             handleFinishReason(fr, `retry-selected#${idx}`);
           },
           onDone: () => {
@@ -4473,7 +4443,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             if (View && View.mode === 'bi' && Bilingual.canRender()) {
               View.renderBilingual();
             }
-          } catch {}
+          } catch { }
 
           return;
         }
@@ -4487,7 +4457,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     },
 
     // 仅重试未完成/失败的块（断点续传）
-    async retryIncomplete(){
+    async retryIncomplete() {
       const s = settings.get();
       const indices = this.collectIncompleteIndices();
       if (!indices.length) { UI.toast('没有需要重试的段落'); return; }
@@ -4517,8 +4487,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const payload = {
           model: settings.get().model.id,
           messages: [
-            { role:'system', content: settings.get().prompt.system },
-            { role:'user',   content: settings.get().prompt.userTemplate.replace('{{content}}', subPlan.find(p=>p.index===idx).html) }
+            { role: 'system', content: settings.get().prompt.system },
+            { role: 'user', content: settings.get().prompt.userTemplate.replace('{{content}}', subPlan.find(p => p.index === idx).html) }
           ],
           temperature: settings.get().gen.temperature,
           max_tokens: settings.get().gen.maxTokens,
@@ -4540,22 +4510,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             if (RenderState && RenderState.lastApplied) RenderState.lastApplied[idx] = '';
             Controller.applyDirect(idx, '<span class="ao3x-muted">（重试中…）</span>');
           },
-          onDelta: (delta) => { Streamer.push(idx, delta, (k, clean)=>{ TransStore.set(String(k), clean); Controller.applyDirect(k, clean); }); },
-          onFinishReason: (fr)=>{
-            d('retry:finish_reason', {idx, fr});
+          onDelta: (delta) => { Streamer.push(idx, delta, (k, clean) => { TransStore.set(String(k), clean); Controller.applyDirect(k, clean); }); },
+          onFinishReason: (fr) => {
+            d('retry:finish_reason', { idx, fr });
             handleFinishReason(fr, `retry#${idx}`);
           },
           onDone: () => {
             TransStore.markDone(idx);
             inFlight--; completed++;
-            Streamer.done(idx, (k, clean)=>{ TransStore.set(String(k), clean); Controller.applyDirect(k, clean); });
+            Streamer.done(idx, (k, clean) => { TransStore.set(String(k), clean); Controller.applyDirect(k, clean); });
             // 若正好轮到该块，也推进一次顺序渲染
             if (RenderState.canRender(idx)) RenderState.finalizeCurrent();
             updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
           },
           onError: (e) => {
             inFlight--; failed++;
-            const msg = (TransStore.get(String(idx))||'') + `<p class="ao3x-muted">[该段失败：${e.message}]</p>`;
+            const msg = (TransStore.get(String(idx)) || '') + `<p class="ao3x-muted">[该段失败：${e.message}]</p>`;
             TransStore.set(String(idx), msg);
             TransStore.markDone(idx);
             Controller.applyDirect(idx, msg);
@@ -4570,7 +4540,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       let ptr = 0; let running = 0;
       await new Promise(resolve => {
         const kick = () => {
-          while (running < conc && ptr < indices.length){
+          while (running < conc && ptr < indices.length) {
             const i = indices[ptr++]; running++;
             postOne(i);
             // 监听完成：通过轮询观察已完成数量
@@ -4582,17 +4552,17 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
       // 最后兜底刷新与双语视图
       finalFlushAll(RenderState.total || 0);
-      try { if (View && View.mode === 'bi' && Bilingual.canRender()) View.renderBilingual(); } catch {}
+      try { if (View && View.mode === 'bi' && Bilingual.canRender()) View.renderBilingual(); } catch { }
       UI.toast('重试完成');
       UI.updateToolbarState(); // 更新工具栏状态
     },
-    async startTranslate(){
+    async startTranslate() {
       if (this._isTranslating) {
         UI.toast('翻译任务正在进行中，请勿重复触发');
         return;
       }
 
-      const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+      const nodes = collectChapterUserstuffSmart(); if (!nodes.length) { UI.toast('未找到章节正文'); return; }
 
       const existingContainer = document.querySelector('#ao3x-render');
       if (existingContainer) {
@@ -4625,7 +4595,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       UI.setTranslateBusy(true);
       try {
         const nodes = collectChapterUserstuffSmart();
-        if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+        if (!nodes.length) { UI.toast('未找到章节正文'); return; }
 
         markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
 
@@ -4634,7 +4604,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
 
         const s = settings.get();
-        const allHtml = nodes.map(n=>n.innerHTML);
+        const allHtml = nodes.map(n => n.innerHTML);
         const fullHtml = allHtml.join('\n');
         const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
         const reserve = s.planner?.reserve ?? 384;
@@ -4642,14 +4612,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
         // 固定prompt token（不含正文）
         const promptTokens = await estimatePromptTokensFromMessages([
-          { role:'system', content: s.prompt.system || '' },
-          { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
+          { role: 'system', content: s.prompt.system || '' },
+          { role: 'user', content: (s.prompt.userTemplate || '').replace('{{content}}', '') }
         ]);
 
         const allText = stripHtmlToText(fullHtml);
         const allEstIn = await estimateTokensForText(allText);
 
-        const cw   = s.model.contextWindow || 8192;
+        const cw = s.model.contextWindow || 8192;
         const maxT = s.gen.maxTokens || 1024;
         // ★ 核心预算：k<1 时更“能塞”
         // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
@@ -4657,10 +4627,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const cap1 = maxT / ratio;
         const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
         const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
-        const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
+        const maxInputBudget = Math.floor(maxInputBudgetRaw * packSlack);
 
         const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
-        const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
+        const canSingle = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
 
         d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
 
@@ -4714,7 +4684,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             userMaxTokens: s.gen.maxTokens
           });
           View.clearInfo();
-        } catch(e) {
+        } catch (e) {
           d('fatal', e);
           UI.toast('翻译失败：' + e.message);
         }
@@ -4725,9 +4695,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     },
 
     // 单次请求：max_tokens 基于真实 inTok 与 ratio
-    async translateSingle({ endpoint, key, stream, modelCw, ratio, promptTokens, reserve, contentHtml, inTok, userMaxTokens }){
+    async translateSingle({ endpoint, key, stream, modelCw, ratio, promptTokens, reserve, contentHtml, inTok, userMaxTokens }) {
       const predictedOut = Math.ceil(inTok * ratio);
-      const outCapByCw   = Math.max(256, modelCw - promptTokens - inTok - reserve);
+      const outCapByCw = Math.max(256, modelCw - promptTokens - inTok - reserve);
       const maxTokensLocal = Math.max(256, Math.min(userMaxTokens, outCapByCw, predictedOut));
       d('single:tokens', { inTok, predictedOut, outCapByCw, userMaxTokens, maxTokensLocal });
       if (maxTokensLocal < 256) throw new Error('上下文空间不足');
@@ -4742,8 +4712,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const payload = {
         model: s.model.id,
         messages: [
-          { role:'system', content: s.prompt.system },
-          { role:'user',   content: s.prompt.userTemplate.replace('{{content}}', contentHtml) }
+          { role: 'system', content: s.prompt.system },
+          { role: 'user', content: s.prompt.userTemplate.replace('{{content}}', contentHtml) }
         ],
         temperature: s.gen.temperature,
         max_tokens: maxTokensLocal,
@@ -4753,7 +4723,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       await postChatWithRetry({
         endpoint, key, stream,
         payload,
-        label:`single#${i}`,
+        label: `single#${i}`,
         onAttempt: (attempt) => {
           if (attempt === 1) return;
           updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/1`, 状态: '重试中', 尝试: `第${attempt}次` });
@@ -4763,9 +4733,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = '';
           Controller.applyDirect(i, '<span class="ao3x-muted">（重试中…）</span>');
         },
-        onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-        onFinishReason: (fr)=>{
-          d('finish_reason', {i, fr});
+        onDelta: (delta) => { Streamer.push(i, delta, (k, clean) => { View.setBlockTranslation(k, clean); }); },
+        onFinishReason: (fr) => {
+          d('finish_reason', { i, fr });
           handleFinishReason(fr, `single#${i}`);
         },
         onDone: async () => {
@@ -4787,57 +4757,57 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           finalFlushAll(1);
           UI.updateToolbarState(); // 更新工具栏状态
           if (View && View.mode === 'bi' && Bilingual && Bilingual.canRender && Bilingual.canRender()) {
-            try { View.renderBilingual(); } catch {}
+            try { View.renderBilingual(); } catch { }
           }
-          },
-          onError: (e)=>{
-            inFlight = 0; failed = 1;
-            updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/1`, 状态: '失败' });
-            // Mark as done with failure note so render can advance and UI不会卡住
-            const msg = `<p class="ao3x-muted">[请求失败：${e.message}]</p>`;
-            const prev = TransStore.get(String(i)) || '';
-            TransStore.set(String(i), prev + msg);
-            TransStore.markDone(i);
-            View.setBlockTranslation(i, prev + msg);
-            RenderState.finalizeCurrent();
-            throw e;
-          }
+        },
+        onError: (e) => {
+          inFlight = 0; failed = 1;
+          updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/1`, 状态: '失败' });
+          // Mark as done with failure note so render can advance and UI不会卡住
+          const msg = `<p class="ao3x-muted">[请求失败：${e.message}]</p>`;
+          const prev = TransStore.get(String(i)) || '';
+          TransStore.set(String(i), prev + msg);
+          TransStore.markDone(i);
+          View.setBlockTranslation(i, prev + msg);
+          RenderState.finalizeCurrent();
+          throw e;
+        }
       });
     },
 
     // 分块并发：含动态校准 ratio（首块实测 out/in），对"未启动的块"合包重排，减少请求次数
-    async translateConcurrent({ endpoint, key, plan, concurrency, stream, modelCw, ratio, promptTokens, reserve, userMaxTokens }){
+    async translateConcurrent({ endpoint, key, plan, concurrency, stream, modelCw, ratio, promptTokens, reserve, userMaxTokens }) {
       const N = plan.length;
       RenderState.setTotal(N);
       Bilingual.setTotal(N);
 
-      let inFlight=0, nextToStart=0, completed=0, failed=0;
+      let inFlight = 0, nextToStart = 0, completed = 0, failed = 0;
 
       let calibrated = false;
-      let liveRatio  = ratio; // 运行期实时 ratio
-      let currentBudget = Math.floor(Math.max(0, Math.min(userMaxTokens/liveRatio, (modelCw - promptTokens - reserve)/(1+liveRatio))) * (settings.get().planner.packSlack || 0.95));
+      let liveRatio = ratio; // 运行期实时 ratio
+      let currentBudget = Math.floor(Math.max(0, Math.min(userMaxTokens / liveRatio, (modelCw - promptTokens - reserve) / (1 + liveRatio))) * (settings.get().planner.packSlack || 0.95));
 
       const started = new Set(); // 已经发出的 index
 
-      const startNext = ()=>{ while(inFlight < concurrency && nextToStart < plan.length){ startChunk(nextToStart++); } };
+      const startNext = () => { while (inFlight < concurrency && nextToStart < plan.length) { startChunk(nextToStart++); } };
 
-      const startChunk = (i)=>{
+      const startChunk = (i) => {
         started.add(i);
         const inputTok = plan[i].inTok != null ? plan[i].inTok : 0;
         const predictedOut = Math.ceil(inputTok * liveRatio);
-        const outCapByCw   = Math.max(256, modelCw - promptTokens - inputTok - reserve);
+        const outCapByCw = Math.max(256, modelCw - promptTokens - inputTok - reserve);
         let maxTokensLocal = Math.max(256, Math.min(userMaxTokens, outCapByCw, predictedOut));
         const label = `chunk#${i}`;
         inFlight++; updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
         const begin = performance.now();
-        d('chunk:start', {i, inFlight, nextToStart, nextToRender: RenderState.nextToRender, inputTok, predictedOut, outCapByCw, maxTokensLocal, liveRatio});
+        d('chunk:start', { i, inFlight, nextToStart, nextToRender: RenderState.nextToRender, inputTok, predictedOut, outCapByCw, maxTokensLocal, liveRatio });
 
         const snapshot = settings.get();
         const payload = {
           model: snapshot.model.id,
           messages: [
-            { role:'system', content: snapshot.prompt.system },
-            { role:'user',   content: snapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
+            { role: 'system', content: snapshot.prompt.system },
+            { role: 'user', content: snapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
           ],
           temperature: snapshot.gen.temperature,
           max_tokens: maxTokensLocal,
@@ -4855,25 +4825,25 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = '';
             Controller.applyDirect(i, '<span class="ao3x-muted">（重试中…）</span>');
           },
-          onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-          onFinishReason: async (fr)=>{
-            d('finish_reason', {i, fr});
+          onDelta: (delta) => { Streamer.push(i, delta, (k, clean) => { View.setBlockTranslation(k, clean); }); },
+          onFinishReason: async (fr) => {
+            d('finish_reason', { i, fr });
             handleFinishReason(fr, `chunk#${i}`);
-            if(fr === 'length'){
+            if (fr === 'length') {
               // 优先：适度扩大 out，再次尝试一次
               const extra = Math.floor(maxTokensLocal * 0.5);
               const newOutCapByCw = Math.max(256, modelCw - promptTokens - inputTok - reserve);
               const maybe = Math.min(userMaxTokens, newOutCapByCw);
               if (maxTokensLocal + extra <= maybe && extra >= 128) {
                 const newMax = maxTokensLocal + extra;
-                d('length:increase-max_tokens', {i, from:maxTokensLocal, to:newMax});
+                d('length:increase-max_tokens', { i, from: maxTokensLocal, to: newMax });
                 TransStore.set(String(i), ''); // 清空已输出以免重复
                 const retrySnapshot = settings.get();
                 const retryPayload = {
                   model: retrySnapshot.model.id,
                   messages: [
-                    { role:'system', content: retrySnapshot.prompt.system },
-                    { role:'user',   content: retrySnapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
+                    { role: 'system', content: retrySnapshot.prompt.system },
+                    { role: 'user', content: retrySnapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
                   ],
                   temperature: retrySnapshot.gen.temperature,
                   max_tokens: newMax,
@@ -4891,23 +4861,23 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                     if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = '';
                     Controller.applyDirect(i, '<span class="ao3x-muted">（重试中…）</span>');
                   },
-                  onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-                  onFinishReason: (fr2)=>{
-                    d('finish_reason(second)', {i, fr2});
+                  onDelta: (delta) => { Streamer.push(i, delta, (k, clean) => { View.setBlockTranslation(k, clean); }); },
+                  onFinishReason: (fr2) => {
+                    d('finish_reason(second)', { i, fr2 });
                     handleFinishReason(fr2, `chunk#${i}-retry-max`);
                   },
-                  onDone: ()=>{},
-                  onError: (e)=>{ d('length:retry-max error', e); }
+                  onDone: () => { },
+                  onError: (e) => { d('length:retry-max error', e); }
                 });
               } else {
                 // 次选：对该块更细切（一般不会走到这里，因为我们有真实计数）
-                d('length:rechunk', {i});
+                d('length:rechunk', { i });
               }
             }
           },
           onDone: async () => {
             inFlight--; completed++;
-            d('chunk:done', {i, ms: Math.round(performance.now()-begin)});
+            d('chunk:done', { i, ms: Math.round(performance.now() - begin) });
 
             // 同步获取完整内容，避免异步调度导致的内容丢失
             const finalRaw = Streamer._buf[i] || '';
@@ -4927,22 +4897,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             // ★ 动态校准：首个完成的块，实测 out/in（真实 token）
             if (!calibrated) {
               calibrated = true;
-              const outTok   = await estimateTokensForText(stripHtmlToText(finalClean));
-              const inTok    = plan[i].inTok || 1;
-              let observedK  = outTok / inTok;
+              const outTok = await estimateTokensForText(stripHtmlToText(finalClean));
+              const inTok = plan[i].inTok || 1;
+              let observedK = outTok / inTok;
               // 限制范围，避免异常
               observedK = Math.min(1.2, Math.max(0.4, observedK));
               if (Math.abs(observedK - liveRatio) > 0.08) {
-                liveRatio = (liveRatio*0.3 + observedK*0.7); // 比重偏向实测
-                currentBudget = Math.floor(Math.max(0, Math.min(userMaxTokens/liveRatio, (modelCw - promptTokens - reserve)/(1+liveRatio))) * (settings.get().planner.packSlack || 0.95));
+                liveRatio = (liveRatio * 0.3 + observedK * 0.7); // 比重偏向实测
+                currentBudget = Math.floor(Math.max(0, Math.min(userMaxTokens / liveRatio, (modelCw - promptTokens - reserve) / (1 + liveRatio))) * (settings.get().planner.packSlack || 0.95));
                 d('calibrate', { observedK, liveRatio, currentBudget });
 
                 // 对“未启动”的部分合包重排，减少请求次数
                 const notStartedFrom = nextToStart;
                 if (notStartedFrom < plan.length) {
                   const before = plan.slice(0, notStartedFrom);
-                  const coalesced = await packIntoChunks(plan.slice(notStartedFrom).map(p=>p.html), currentBudget);
-                  plan = before.concat(coalesced.map((p,idx)=>({ ...p, index: before.length + idx })));
+                  const coalesced = await packIntoChunks(plan.slice(notStartedFrom).map(p => p.html), currentBudget);
+                  plan = before.concat(coalesced.map((p, idx) => ({ ...p, index: before.length + idx })));
                   // 仅为未启动部分追加锚点，不重置已有 DOM 和状态
                   appendPlanAnchorsFrom(plan, notStartedFrom);
                   // 仅更新总数，不重置 next 指针
@@ -4957,10 +4927,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             UI.updateToolbarState(); // 更新工具栏状态
             startNext();
           },
-          onError: (e)=>{
+          onError: (e) => {
             inFlight--; failed++;
-            d('chunk:error', {i, err: e.message});
-            const clean=(TransStore.get(String(i))||'')+`<p class="ao3x-muted">[该段失败：${e.message}]</p>`;
+            d('chunk:error', { i, err: e.message });
+            const clean = (TransStore.get(String(i)) || '') + `<p class="ao3x-muted">[该段失败：${e.message}]</p>`;
             TransStore.set(String(i), clean);
             TransStore.markDone(i);
             View.setBlockTranslation(i, clean);
@@ -4974,12 +4944,12 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       // 启动并发
       startNext();
       // 顺序推进直至全部完成
-      while(RenderState.nextToRender < plan.length){ await sleep(80); }
+      while (RenderState.nextToRender < plan.length) { await sleep(80); }
       // 兜底一次：确保没有残留“待译”
       finalFlushAll(plan.length);
       UI.updateToolbarState(); // 更新工具栏状态
       // If in bilingual mode, render paired view now that all are done
-      try { if (View && View.mode === 'bi') View.renderBilingual(); } catch {}
+      try { if (View && View.mode === 'bi') View.renderBilingual(); } catch { }
     }
   };
 
@@ -4995,11 +4965,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     hasCache() { return false; },
     getCacheInfo() { return { hasCache: false, total: 0, completed: 0 }; },
 
-    set(i, content){ this._map[i] = content; },
-    get(i){ return this._map[i] || ''; },
-    markDone(i){ this._done[i] = true; },
-    allDone(total){ for(let k=0;k<total;k++){ if(!this._done[k]) return false; } return true; },
-    clear(){ this._map = Object.create(null); this._done = Object.create(null); }
+    set(i, content) { this._map[i] = content; },
+    get(i) { return this._map[i] || ''; },
+    markDone(i) { this._done[i] = true; },
+    allDone(total) { for (let k = 0; k < total; k++) { if (!this._done[k]) return false; } return true; },
+    clear() { this._map = Object.create(null); this._done = Object.create(null); }
   };
 
   /* ================= SummaryController ================= */
@@ -5561,13 +5531,13 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       this._batchUpdates.set(i, { k: i, clean: null, apply });
       this.schedule(true);
     },
-    getCleanNow(i){
+    getCleanNow(i) {
       const raw = (this._buf && this._buf[i]) || '';
       if (!raw) return '';
       const html = /[<][a-zA-Z]/.test(raw) ? raw : raw.replace(/\n/g, '<br/>');
       return sanitizeHTML(html);
     },
-    reset(i){
+    reset(i) {
       if (typeof i === 'number') {
         this._buf[i] = '';
         this._dirty[i] = false;
@@ -5620,15 +5590,15 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
   const SummaryStreamer = createStreamer();
 
   /* ================= 兜底：终局强制刷新 ================= */
-  function finalFlushAll(total){
+  function finalFlushAll(total) {
     const c = document.querySelector('#ao3x-render');
     if (!c) return;
-    for (let i = 0; i < total; i++){
+    for (let i = 0; i < total; i++) {
       const html = TransStore.get(String(i)) || '';
       const anchor = c.querySelector(`[data-chunk-id="${i}"]`);
       if (!anchor) continue;
       let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
-      if(!transDiv){
+      if (!transDiv) {
         transDiv = document.createElement('div');
         transDiv.className = 'ao3x-translation';
         anchor.insertAdjacentElement('afterend', transDiv);
@@ -5639,7 +5609,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }
     }
     if (settings.get().debug) console.log('[AO3X] drain: flushed all blocks into DOM');
-    
+
     // 在所有块都刷新到 DOM 后，初始化分块指示器
     if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
       ChunkIndicator.init();
@@ -5671,8 +5641,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
       // 固定prompt token（不含正文）
       const promptTokens = await estimatePromptTokensFromMessages([
-        { role:'system', content: s.prompt.system || '' },
-        { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
+        { role: 'system', content: s.prompt.system || '' },
+        { role: 'user', content: (s.prompt.userTemplate || '').replace('{{content}}', '') }
       ]);
 
       const cap1 = maxT / ratio;
@@ -5746,7 +5716,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
   }
 
   /* ================= Boot ================= */
-  function init(){
+  function init() {
     UI.init();
     applyFontSize(); // 应用初始字体大小设置
 
@@ -5768,9 +5738,9 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }, 100);
     }
 
-    const mo = new MutationObserver(()=>{ /* no-op，保留接口 */ });
-    mo.observe(document.documentElement, { childList:true, subtree:true });
+    const mo = new MutationObserver(() => { /* no-op，保留接口 */ });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
   }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 
 })();
