@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.5
+// @version      1.2.6
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2732,6 +2732,42 @@
       }
       this._pendingUpdates.clear();
     },
+    // 直接渲染到指定块，绕过顺序检查（用于「只计划」模式的单块翻译）
+    applyDirect(i, cleanHtml) {
+      const c = ensureRenderContainer();
+      const anchor = c.querySelector(`[data-chunk-id="${i}"]`); if (!anchor) return;
+      let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
+      if (!transDiv) {
+        transDiv = document.createElement('div');
+        transDiv.className = 'ao3x-translation';
+        transDiv.style.minHeight = '60px';
+        anchor.insertAdjacentElement('afterend', transDiv);
+      }
+      const prev = this.lastApplied[i] || '';
+      const hasPlaceholder = /[（(]待译/.test(transDiv.textContent || '');
+
+      if (!prev || hasPlaceholder) {
+        this._pendingUpdates.set(i, { transDiv, cleanHtml, mode: 'replace' });
+        this._scheduleUpdate();
+        this.lastApplied[i] = cleanHtml;
+        return;
+      }
+
+      if (cleanHtml === prev) return;
+
+      if (cleanHtml.startsWith(prev)) {
+        const tail = cleanHtml.slice(prev.length);
+        if (tail) {
+          this._pendingUpdates.set(i, { transDiv, tail, mode: 'append' });
+          this._scheduleUpdate();
+          this.lastApplied[i] = cleanHtml;
+        }
+      } else {
+        this._pendingUpdates.set(i, { transDiv, cleanHtml, mode: 'replace' });
+        this._scheduleUpdate();
+        this.lastApplied[i] = cleanHtml;
+      }
+    },
     finalizeCurrent() {
       // Advance rendering pointer and drain any already-finished chunks in order.
       while (this.nextToRender < this.total) {
@@ -5186,7 +5222,8 @@
             onDelta: (delta) => {
               Streamer.push(idx, delta, (k, clean) => {
                 TransStore.set(String(k), clean);
-                View.setBlockTranslation(k, clean);
+                // 「只计划」模式：直接渲染到对应块，绕过顺序检查
+                RenderState.applyDirect(k, clean);
               });
             },
             onFinishReason: (fr) => {
