@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.4
+// @version      1.2.5
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -255,7 +255,12 @@
       btnSummary.textContent = '📝';
       btnSummary.title = '生成章节总结';
 
-      // 移除占位按钮，菜单仅保留“下载”和“总结”两个按钮
+      // 创建只计划按钮
+      const btnPlanOnly = document.createElement('button');
+      btnPlanOnly.className = 'ao3x-btn ao3x-floating-btn';
+      btnPlanOnly.textContent = '📋';
+      btnPlanOnly.title = '只计划不翻译（可手动选择翻译指定块）';
+
       // 创建批量下载按钮
       const btnBatchDownload = document.createElement('button');
       btnBatchDownload.className = 'ao3x-btn ao3x-floating-btn';
@@ -266,6 +271,7 @@
 
       floatingMenu.appendChild(btnDownload);
       floatingMenu.appendChild(btnBatchDownload);
+      floatingMenu.appendChild(btnPlanOnly);
       floatingMenu.appendChild(btnSummary);
       wrap.appendChild(floatingMenu);
 
@@ -458,6 +464,13 @@
       btnBatchDownload.addEventListener('click', (e) => {
         e.stopPropagation();
         Controller.batchDownloadChapters();
+        hideFloatingMenu();
+      });
+
+      // 只计划按钮事件
+      btnPlanOnly.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Controller.planOnly();
         hideFloatingMenu();
       });
 
@@ -1532,6 +1545,22 @@
       }
       .ao3x-btn-primary-mini:hover{
         background:#9a0000;
+      }
+      /* 翻译块按钮 */
+      .ao3x-translate-block-btn{
+        margin-left:auto;background:var(--c-accent);color:white;
+        border-color:var(--c-accent);
+      }
+      .ao3x-translate-block-btn:hover{
+        background:#9a0000;
+      }
+      .ao3x-translate-block-btn.ao3x-btn-done{
+        background:var(--c-soft);color:var(--c-muted);
+        border-color:var(--c-border);cursor:default;
+      }
+      .ao3x-translate-block-btn.ao3x-btn-done:hover{
+        background:var(--c-soft);color:var(--c-muted);
+        transform:none;
       }
 
       /* 块复选框 */
@@ -4950,8 +4979,490 @@
       UI.updateToolbarState(); // 更新工具栏状态
       // If in bilingual mode, render paired view now that all are done
       try { if (View && View.mode === 'bi') View.renderBilingual(); } catch { }
+    },
+
+    // 只计划不翻译：生成分块计划，但不自动开始翻译
+    _planOnlyPlan: null,  // 保存计划供后续翻译使用
+
+    async planOnly() {
+      if (this._isTranslating) {
+        UI.toast('翻译任务正在进行中，请勿重复触发');
+        return;
+      }
+
+      const nodes = collectChapterUserstuffSmart();
+      if (!nodes.length) {
+        UI.toast('未找到章节正文');
+        return;
+      }
+
+      // 检查是否已存在翻译
+      const existingContainer = document.querySelector('#ao3x-render');
+      if (existingContainer) {
+        const existingBlocks = existingContainer.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+        if (existingBlocks.length) {
+          const hasRenderedTranslation = Array.from(existingBlocks).some(block => {
+            const trans = block.querySelector('.ao3x-translation');
+            if (!trans) return false;
+            const html = (trans.innerHTML || '').trim();
+            if (!html) return false;
+            const text = (trans.textContent || '').trim();
+            return text && !/[（(]待译[)）]/.test(text);
+          });
+          if (hasRenderedTranslation) {
+            UI.toast('当前页面已存在译文，如需重新计划请先清除缓存');
+            return;
+          }
+        }
+      }
+
+      markSelectedNodes(nodes);
+      renderContainer = null;
+      UI.showToolbar();
+      View.info('正在生成分块计划…');
+
+      try {
+        const s = settings.get();
+        const allHtml = nodes.map(n => n.innerHTML);
+        const fullHtml = allHtml.join('\n');
+        const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
+        const reserve = s.planner?.reserve ?? 384;
+        const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
+
+        // 固定prompt token（不含正文）
+        const promptTokens = await estimatePromptTokensFromMessages([
+          { role: 'system', content: s.prompt.system || '' },
+          { role: 'user', content: (s.prompt.userTemplate || '').replace('{{content}}', '') }
+        ]);
+
+        const allText = stripHtmlToText(fullHtml);
+        const allEstIn = await estimateTokensForText(allText);
+
+        const cw = s.model.contextWindow || 8192;
+        const maxT = s.gen.maxTokens || 1024;
+        const cap1 = maxT / ratio;
+        const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
+        const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
+        const maxInputBudget = Math.floor(maxInputBudgetRaw * packSlack);
+
+        const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
+        const canSingle = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
+
+        d('planOnly:budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
+
+        // 规划
+        let plan = [];
+        if (canSingle) {
+          const inTok = await estimateTokensForText(allText);
+          plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
+        } else {
+          plan = await packIntoChunks(allHtml, maxInputBudget);
+        }
+
+        d('planOnly:plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
+
+        // 保存计划供后续翻译使用
+        this._planOnlyPlan = plan;
+
+        // 渲染计划面板（带翻译按钮）
+        renderPlanAnchorsWithTranslateButtons(plan);
+        View.setMode('trans');
+        RenderState.setTotal(plan.length);
+        Bilingual.setTotal(plan.length);
+
+        // 更新统计显示
+        updateKV({ 总块数: plan.length, 状态: '计划完成，可选择翻译' });
+
+        View.clearInfo();
+        UI.toast(`分块计划完成：共 ${plan.length} 块，可点击"翻译"按钮翻译指定块`);
+
+      } catch (e) {
+        d('planOnly:error', e);
+        UI.toast('生成计划失败：' + e.message);
+      }
+    },
+
+    // 翻译指定的块（用于"只计划"模式下的手动翻译）
+    async translateBlocks(blockIndices) {
+      if (!blockIndices || !blockIndices.length) {
+        UI.toast('请选择要翻译的块');
+        return;
+      }
+
+      if (this._isTranslating) {
+        UI.toast('翻译任务正在进行中，请稍候');
+        return;
+      }
+
+      const plan = this._planOnlyPlan;
+      if (!plan || !plan.length) {
+        UI.toast('未找到分块计划，请先执行"只计划"');
+        return;
+      }
+
+      // 过滤出有效的块索引
+      const validIndices = blockIndices.filter(i => i >= 0 && i < plan.length);
+      if (!validIndices.length) {
+        UI.toast('选择的块索引无效');
+        return;
+      }
+
+      this._isTranslating = true;
+      UI.setTranslateBusy(true);
+
+      try {
+        const s = settings.get();
+        const totalToTranslate = validIndices.length;
+
+        UI.toast(`开始翻译 ${totalToTranslate} 个块…`);
+
+        // 状态计数
+        let inFlight = 0, completed = 0, failed = 0;
+        updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 总计: totalToTranslate });
+
+        const c = document.querySelector('#ao3x-render');
+        if (!c) {
+          UI.toast('未找到渲染容器');
+          return;
+        }
+
+        // 准备翻译的块
+        const queue = [...validIndices];
+
+        const translateOne = (idx) => {
+          const planItem = plan[idx];
+          if (!planItem || !planItem.html) {
+            failed++;
+            updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 总计: totalToTranslate });
+            launchNext();
+            return;
+          }
+
+          // 更新UI显示为翻译中
+          Controller.applyDirect(idx, '<span class="ao3x-muted">（翻译中…）</span>');
+
+          const label = `block#${idx}`;
+          inFlight++;
+          updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 总计: totalToTranslate });
+
+          const inputTok = planItem.inTok || 0;
+          const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
+          const reserve = s.planner?.reserve ?? 384;
+          const modelCw = s.model.contextWindow || 8192;
+          const userMaxTokens = s.gen.maxTokens || 1024;
+
+          // 计算prompt tokens
+          const promptTokensEst = 200; // 估算值
+          const predictedOut = Math.ceil(inputTok * ratio);
+          const outCapByCw = Math.max(256, modelCw - promptTokensEst - inputTok - reserve);
+          const maxTokensLocal = Math.max(256, Math.min(userMaxTokens, outCapByCw, predictedOut));
+
+          const payload = {
+            model: s.model.id,
+            messages: [
+              { role: 'system', content: s.prompt.system },
+              { role: 'user', content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
+            ],
+            temperature: s.gen.temperature,
+            max_tokens: maxTokensLocal,
+            stream: !!s.stream.enabled
+          };
+          applyReasoningEffort(payload, s.translate?.reasoningEffort);
+
+          postChatWithRetry({
+            endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
+            key: s.api.key,
+            payload,
+            stream: s.stream.enabled,
+            label,
+            onAttempt: (attempt) => {
+              if (attempt === 1) return;
+              if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(idx);
+              TransStore.set(String(idx), '');
+              if (TransStore._done) delete TransStore._done[idx];
+              if (RenderState && RenderState.lastApplied) RenderState.lastApplied[idx] = '';
+              Controller.applyDirect(idx, '<span class="ao3x-muted">（重试中…）</span>');
+            },
+            onDelta: (delta) => {
+              Streamer.push(idx, delta, (k, clean) => {
+                TransStore.set(String(k), clean);
+                View.setBlockTranslation(k, clean);
+              });
+            },
+            onFinishReason: (fr) => {
+              d('translateBlocks:finish_reason', { idx, fr });
+              handleFinishReason(fr, `block#${idx}`);
+            },
+            onDone: () => {
+              inFlight--;
+              completed++;
+
+              // 同步获取完整内容
+              const finalRaw = Streamer._buf[idx] || '';
+              const finalHtml = /[<][a-zA-Z]/.test(finalRaw) ? finalRaw : finalRaw.replace(/\n/g, '<br/>');
+              const finalClean = sanitizeHTML(finalHtml);
+
+              // 保存和渲染
+              TransStore.set(String(idx), finalClean);
+              TransStore.markDone(idx);
+              View.setBlockTranslation(idx, finalClean);
+
+              updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 总计: totalToTranslate });
+              UI.updateToolbarState();
+
+              // 更新块的翻译按钮状态
+              updateBlockTranslateButton(idx, true);
+
+              launchNext();
+            },
+            onError: (e) => {
+              inFlight--;
+              failed++;
+              d('translateBlocks:error', { idx, err: e.message });
+
+              const clean = `<p class="ao3x-muted">[翻译失败：${e.message}]</p>`;
+              TransStore.set(String(idx), clean);
+              TransStore.markDone(idx);
+              View.setBlockTranslation(idx, clean);
+
+              updateKV({ 进行中: inFlight, 完成: completed, 失败: failed, 总计: totalToTranslate });
+
+              launchNext();
+            }
+          });
+        };
+
+        const conc = Math.max(1, Math.min(4, s.concurrency || 2));
+
+        const launchNext = () => {
+          while (inFlight < conc && queue.length) {
+            const nextIdx = queue.shift();
+            translateOne(nextIdx);
+          }
+
+          // 检查是否全部完成
+          if (completed + failed >= totalToTranslate && inFlight === 0) {
+            UI.toast(`翻译完成：成功 ${completed}，失败 ${failed}`);
+            finalFlushAll(plan.length);
+            try {
+              if (View && View.mode === 'bi' && Bilingual.canRender()) {
+                View.renderBilingual();
+              }
+            } catch { }
+          }
+        };
+
+        // 开始翻译
+        launchNext();
+
+      } finally {
+        this._isTranslating = false;
+        UI.setTranslateBusy(false);
+      }
     }
   };
+
+  // 渲染带翻译按钮的计划面板
+  function renderPlanAnchorsWithTranslateButtons(plan) {
+    const c = ensureRenderContainer();
+    c.innerHTML = '';
+    const box = document.createElement('div');
+    box.id = 'ao3x-plan';
+    box.className = 'ao3x-plan';
+    c.appendChild(box);
+
+    const rows = plan.map((p, i) => {
+      const estIn = p.inTok != null ? p.inTok : 0;
+      return `<div class="row">
+        <label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label>
+        <button class="ao3x-btn-mini ao3x-jump-btn" data-block-index="${i}" title="跳转到块 #${i}">📍</button>
+        <b>块 #${i}</b>
+        <span class="ao3x-small">~${estIn} tokens</span>
+        <button class="ao3x-btn-mini ao3x-translate-block-btn" data-block-index="${i}" title="翻译此块">🌐 翻译</button>
+      </div>`;
+    }).join('');
+
+    const controls = `
+      <div class="ao3x-block-controls">
+        <button id="ao3x-select-all" class="ao3x-btn-mini">全选</button>
+        <button id="ao3x-select-none" class="ao3x-btn-mini">取消全选</button>
+        <button id="ao3x-select-invert" class="ao3x-btn-mini">反选</button>
+        <button id="ao3x-translate-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">翻译选中</button>
+        <button id="ao3x-translate-all" class="ao3x-btn-mini ao3x-btn-primary-mini">翻译全部</button>
+      </div>
+    `;
+
+    box.innerHTML = `
+      <div class="ao3x-plan-header">
+        <h4>翻译计划：共 ${plan.length} 块（只计划模式）</h4>
+        <button class="ao3x-plan-toggle" type="button" title="折叠/展开">▾</button>
+      </div>
+      <div class="ao3x-plan-body">
+        <div class="ao3x-plan-controls">${controls}</div>
+        <div class="ao3x-plan-rows">${rows}</div>
+        <div class="ao3x-kv" id="ao3x-kv" style="padding:0 16px 12px;"></div>
+      </div>
+    `;
+
+    // 使用事件委托绑定折叠按钮事件
+    box.removeEventListener('click', togglePlanHandler);
+    box.addEventListener('click', togglePlanHandler);
+
+    // 绑定控制按钮事件
+    bindPlanOnlyControlEvents(box);
+
+    // 初始化统计显示
+    updateKV({ 总块数: plan.length, 状态: '计划完成' });
+
+    PlanStore.clear();
+    plan.forEach((p, i) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'ao3x-block';
+      wrapper.setAttribute('data-index', String(i));
+      wrapper.setAttribute('data-original-html', p.html);
+      PlanStore.set(i, p.html);
+
+      const anchor = document.createElement('span');
+      anchor.className = 'ao3x-anchor';
+      anchor.setAttribute('data-chunk-id', String(i));
+      wrapper.appendChild(anchor);
+
+      const div = document.createElement('div');
+      div.className = 'ao3x-translation';
+      div.innerHTML = '<span class="ao3x-muted">（待译 - 点击上方"翻译"按钮开始）</span>';
+      wrapper.appendChild(div);
+
+      c.appendChild(wrapper);
+    });
+
+    if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.init) {
+      ChunkIndicator.init();
+    }
+  }
+
+  // 绑定"只计划"模式的控制按钮事件
+  function bindPlanOnlyControlEvents(container) {
+    const selectAllBtn = container.querySelector('#ao3x-select-all');
+    const selectNoneBtn = container.querySelector('#ao3x-select-none');
+    const selectInvertBtn = container.querySelector('#ao3x-select-invert');
+    const translateSelectedBtn = container.querySelector('#ao3x-translate-selected');
+    const translateAllBtn = container.querySelector('#ao3x-translate-all');
+
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = true);
+        UI.toast(`已选择 ${checkboxes.length} 个块`);
+      });
+    }
+
+    if (selectNoneBtn) {
+      selectNoneBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = false);
+        UI.toast('已取消全部选择');
+      });
+    }
+
+    if (selectInvertBtn) {
+      selectInvertBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
+        let selectedCount = 0;
+        checkboxes.forEach(cb => {
+          cb.checked = !cb.checked;
+          if (cb.checked) selectedCount++;
+        });
+        UI.toast(`已反选，当前选中 ${selectedCount} 个块`);
+      });
+    }
+
+    if (translateSelectedBtn) {
+      translateSelectedBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]:checked');
+        const selectedIndices = Array.from(checkboxes).map(cb => {
+          const index = cb.getAttribute('data-block-index');
+          return parseInt(index, 10);
+        }).filter(i => !isNaN(i));
+
+        if (selectedIndices.length === 0) {
+          UI.toast('请先选择要翻译的块');
+          return;
+        }
+
+        Controller.translateBlocks(selectedIndices);
+      });
+    }
+
+    if (translateAllBtn) {
+      translateAllBtn.addEventListener('click', () => {
+        const plan = Controller._planOnlyPlan;
+        if (!plan || !plan.length) {
+          UI.toast('未找到分块计划');
+          return;
+        }
+
+        const allIndices = plan.map((_, i) => i);
+        Controller.translateBlocks(allIndices);
+      });
+    }
+
+    // 绑定单个块的翻译按钮事件（使用事件委托）
+    if (container._translateBlockHandler) {
+      container.removeEventListener('click', container._translateBlockHandler);
+    }
+
+    container._translateBlockHandler = (event) => {
+      const translateBtn = event.target.closest('.ao3x-translate-block-btn');
+      if (!translateBtn || !container.contains(translateBtn)) return;
+
+      event.preventDefault();
+      const index = Number(translateBtn.getAttribute('data-block-index'));
+      if (!Number.isFinite(index)) return;
+
+      // 检查是否已翻译
+      const isDone = TransStore._done && TransStore._done[index];
+      if (isDone) {
+        UI.toast(`块 #${index} 已翻译完成`);
+        return;
+      }
+
+      Controller.translateBlocks([index]);
+    };
+
+    container.addEventListener('click', container._translateBlockHandler);
+
+    // 绑定跳转按钮事件
+    if (container._jumpClickHandler) {
+      container.removeEventListener('click', container._jumpClickHandler);
+    }
+
+    container._jumpClickHandler = (event) => {
+      const jumpBtn = event.target.closest('.ao3x-jump-btn');
+      if (!jumpBtn || !container.contains(jumpBtn)) return;
+      event.preventDefault();
+      const index = Number(jumpBtn.getAttribute('data-block-index'));
+      if (!Number.isFinite(index)) return;
+      scrollToChunkStart(index);
+    };
+
+    container.addEventListener('click', container._jumpClickHandler);
+  }
+
+  // 更新块的翻译按钮状态
+  function updateBlockTranslateButton(index, isDone) {
+    const btn = document.querySelector(`.ao3x-translate-block-btn[data-block-index="${index}"]`);
+    if (btn) {
+      if (isDone) {
+        btn.textContent = '✓ 已译';
+        btn.disabled = true;
+        btn.classList.add('ao3x-btn-done');
+      } else {
+        btn.textContent = '🌐 翻译';
+        btn.disabled = false;
+        btn.classList.remove('ao3x-btn-done');
+      }
+    }
+  }
 
   /* ================= Summary Storage ================= */
   const SummaryStore = {
