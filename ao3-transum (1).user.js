@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.7
+// @version      1.2.8
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -3707,20 +3707,28 @@
         }
 
         const xml = await response.text();
+        console.log('[CacheManager] WebDAV PROPFIND response:', xml);
         const parser = new DOMParser();
         const doc = parser.parseFromString(xml, 'text/xml');
 
         const files = [];
-        const responses = doc.getElementsByTagName('d:response');
+        // 使用 getElementsByTagNameNS 处理命名空间，兼容不同 WebDAV 服务器
+        const responses = doc.getElementsByTagNameNS('DAV:', 'response');
+        console.log('[CacheManager] Found responses:', responses.length);
 
         for (const resp of responses) {
-          const href = resp.getElementsByTagName('d:href')[0]?.textContent;
+          const hrefElement = resp.getElementsByTagNameNS('DAV:', 'href')[0];
+          const href = hrefElement?.textContent || hrefElement?.text;
+          console.log('[CacheManager] Processing href:', href);
           // 只支持 .json 文件
           if (href && href.endsWith('.json')) {
-            const filename = href.split('/').pop();
+            const filename = decodeURIComponent(href.split('/').pop());
+            console.log('[CacheManager] Found JSON file:', filename);
             files.push({ filename, href });
           }
         }
+
+        console.log('[CacheManager] Total JSON files found:', files.length);
 
         // 按时间排序（最新的在前）
         files.sort((a, b) => b.filename.localeCompare(a.filename));
