@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.6
+// @version      1.2.7
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -45,6 +45,7 @@
       stream: { enabled: true, minFrameMs: 30 },
       concurrency: 3,
       debug: false,
+      disableSystemPrompt: false,  // 是否禁用发送 system prompt
       ui: { fontSize: 16 }, // 译文字体大小
       planner: {
         reserve: 384,
@@ -682,6 +683,11 @@
                 <span class="ao3x-switch-slider"></span>
                 <span class="ao3x-switch-label">显示分块预览</span>
               </label>
+              <label class="ao3x-switch">
+                <input id="ao3x-disable-system-prompt" type="checkbox"/>
+                <span class="ao3x-switch-slider"></span>
+                <span class="ao3x-switch-label">禁用 System Prompt</span>
+              </label>
             </div>
             <div class="ao3x-field">
               <label>存储管理</label>
@@ -912,6 +918,7 @@
       $('#ao3x-sys').value = s.prompt.system; $('#ao3x-user').value = s.prompt.userTemplate;
       $('#ao3x-stream').checked = !!s.stream.enabled; $('#ao3x-stream-minframe').value = String(s.stream.minFrameMs ?? 40);
       $('#ao3x-debug').checked = !!s.debug; $('#ao3x-conc').value = String(s.concurrency);
+      $('#ao3x-disable-system-prompt').checked = !!s.disableSystemPrompt;
       $('#ao3x-idle').value = String(s.watchdog.idleMs); $('#ao3x-hard').value = String(s.watchdog.hardMs); $('#ao3x-retry').value = String(s.watchdog.maxRetry);
       $('#ao3x-ratio').value = String(s.planner?.ratioOutPerIn || 0.7);
       $('#ao3x-font-size').value = String(s.ui?.fontSize || 16);
@@ -1843,6 +1850,17 @@
     payload.reasoning = { effort };
     return payload;
   }
+
+  // 构建 messages 数组，根据设置决定是否包含 system prompt
+  function buildMessages(systemPrompt, userContent, disableSystemPrompt) {
+    const messages = [];
+    if (!disableSystemPrompt && systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
+    messages.push({ role: 'user', content: userContent });
+    return messages;
+  }
+
   function collectPanelValues(panel) {
     const cur = settings.get();
 
@@ -1899,6 +1917,7 @@
       stream: { enabled: $('#ao3x-stream', panel).checked, minFrameMs: Math.max(0, parseInt($('#ao3x-stream-minframe', panel).value || String(cur.stream.minFrameMs || 40), 10)) },
       concurrency: Math.max(1, Math.min(8, parseInt($('#ao3x-conc', panel).value, 10) || cur.concurrency)),
       debug: $('#ao3x-debug', panel).checked,
+      disableSystemPrompt: $('#ao3x-disable-system-prompt', panel).checked,
       planner: {
         ...cur.planner,
         ratioOutPerIn: Math.max(0.3, parseFloat($('#ao3x-ratio', panel).value || cur.planner?.ratioOutPerIn || 0.7))
@@ -4377,10 +4396,11 @@
 
         const payload = {
           model: s.model.id,
-          messages: [
-            { role: 'system', content: s.prompt.system },
-            { role: 'user', content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
-          ],
+          messages: buildMessages(
+            s.prompt.system,
+            s.prompt.userTemplate.replace('{{content}}', planItem.html),
+            s.disableSystemPrompt
+          ),
           temperature: s.gen.temperature,
           max_tokens: s.gen.maxTokens,
           stream: !!s.stream.enabled
@@ -4549,15 +4569,17 @@
 
         const label = `retry#${idx}`;
         inFlight++; updateKV({ 进行中: inFlight, 完成: completed, 失败: failed });
+        const s = settings.get();
         const payload = {
-          model: settings.get().model.id,
-          messages: [
-            { role: 'system', content: settings.get().prompt.system },
-            { role: 'user', content: settings.get().prompt.userTemplate.replace('{{content}}', subPlan.find(p => p.index === idx).html) }
-          ],
-          temperature: settings.get().gen.temperature,
-          max_tokens: settings.get().gen.maxTokens,
-          stream: !!settings.get().stream.enabled
+          model: s.model.id,
+          messages: buildMessages(
+            s.prompt.system,
+            s.prompt.userTemplate.replace('{{content}}', subPlan.find(p => p.index === idx).html),
+            s.disableSystemPrompt
+          ),
+          temperature: s.gen.temperature,
+          max_tokens: s.gen.maxTokens,
+          stream: !!s.stream.enabled
         };
         applyReasoningEffort(payload, s.translate?.reasoningEffort);
 
@@ -4676,10 +4698,13 @@
         const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
 
         // 固定prompt token（不含正文）
-        const promptTokens = await estimatePromptTokensFromMessages([
-          { role: 'system', content: s.prompt.system || '' },
-          { role: 'user', content: (s.prompt.userTemplate || '').replace('{{content}}', '') }
-        ]);
+        const promptTokens = await estimatePromptTokensFromMessages(
+          buildMessages(
+            s.prompt.system || '',
+            (s.prompt.userTemplate || '').replace('{{content}}', ''),
+            s.disableSystemPrompt
+          )
+        );
 
         const allText = stripHtmlToText(fullHtml);
         const allEstIn = await estimateTokensForText(allText);
@@ -4776,10 +4801,11 @@
 
       const payload = {
         model: s.model.id,
-        messages: [
-          { role: 'system', content: s.prompt.system },
-          { role: 'user', content: s.prompt.userTemplate.replace('{{content}}', contentHtml) }
-        ],
+        messages: buildMessages(
+          s.prompt.system,
+          s.prompt.userTemplate.replace('{{content}}', contentHtml),
+          s.disableSystemPrompt
+        ),
         temperature: s.gen.temperature,
         max_tokens: maxTokensLocal,
         stream: !!s.stream.enabled
@@ -4870,10 +4896,11 @@
         const snapshot = settings.get();
         const payload = {
           model: snapshot.model.id,
-          messages: [
-            { role: 'system', content: snapshot.prompt.system },
-            { role: 'user', content: snapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
-          ],
+          messages: buildMessages(
+            snapshot.prompt.system,
+            snapshot.prompt.userTemplate.replace('{{content}}', plan[i].html),
+            snapshot.disableSystemPrompt
+          ),
           temperature: snapshot.gen.temperature,
           max_tokens: maxTokensLocal,
           stream: !!snapshot.stream.enabled
@@ -4906,10 +4933,11 @@
                 const retrySnapshot = settings.get();
                 const retryPayload = {
                   model: retrySnapshot.model.id,
-                  messages: [
-                    { role: 'system', content: retrySnapshot.prompt.system },
-                    { role: 'user', content: retrySnapshot.prompt.userTemplate.replace('{{content}}', plan[i].html) }
-                  ],
+                  messages: buildMessages(
+                    retrySnapshot.prompt.system,
+                    retrySnapshot.prompt.userTemplate.replace('{{content}}', plan[i].html),
+                    retrySnapshot.disableSystemPrompt
+                  ),
                   temperature: retrySnapshot.gen.temperature,
                   max_tokens: newMax,
                   stream: !!retrySnapshot.stream.enabled
@@ -5066,10 +5094,13 @@
         const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
 
         // 固定prompt token（不含正文）
-        const promptTokens = await estimatePromptTokensFromMessages([
-          { role: 'system', content: s.prompt.system || '' },
-          { role: 'user', content: (s.prompt.userTemplate || '').replace('{{content}}', '') }
-        ]);
+        const promptTokens = await estimatePromptTokensFromMessages(
+          buildMessages(
+            s.prompt.system || '',
+            (s.prompt.userTemplate || '').replace('{{content}}', ''),
+            s.disableSystemPrompt
+          )
+        );
 
         const allText = stripHtmlToText(fullHtml);
         const allEstIn = await estimateTokensForText(allText);
@@ -5195,10 +5226,11 @@
 
           const payload = {
             model: s.model.id,
-            messages: [
-              { role: 'system', content: s.prompt.system },
-              { role: 'user', content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
-            ],
+            messages: buildMessages(
+              s.prompt.system,
+              s.prompt.userTemplate.replace('{{content}}', planItem.html),
+              s.disableSystemPrompt
+            ),
             temperature: s.gen.temperature,
             max_tokens: maxTokensLocal,
             stream: !!s.stream.enabled
@@ -5583,10 +5615,13 @@
         const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
 
         // 计算总结的prompt tokens
-        const promptTokens = await estimatePromptTokensFromMessages([
-          { role: 'system', content: config.system },
-          { role: 'user', content: config.userTemplate.replace('{{content}}', '') }
-        ]);
+        const promptTokens = await estimatePromptTokensFromMessages(
+          buildMessages(
+            config.system,
+            config.userTemplate.replace('{{content}}', ''),
+            s.disableSystemPrompt
+          )
+        );
 
         const allText = stripHtmlToText(fullHtml);
         const allEstIn = await estimateTokensForText(allText);
@@ -5838,10 +5873,11 @@
 
       const payload = {
         model: s.summary?.model?.id || s.model.id,
-        messages: [
-          { role: 'system', content: config.system },
-          { role: 'user', content: config.userTemplate.replace('{{content}}', contentHtml) }
-        ],
+        messages: buildMessages(
+          config.system,
+          config.userTemplate.replace('{{content}}', contentHtml),
+          s.disableSystemPrompt
+        ),
         temperature: s.summary?.gen?.temperature || s.gen.temperature,
         max_tokens: maxTokensLocal,
         stream: !!s.stream.enabled
@@ -5936,10 +5972,11 @@
         const snapshot = settings.get();
         const payload = {
           model: snapshot.summary?.model?.id || snapshot.model.id,
-          messages: [
-            { role: 'system', content: config.system },
-            { role: 'user', content: config.userTemplate.replace('{{content}}', plan[i].html) }
-          ],
+          messages: buildMessages(
+            config.system,
+            config.userTemplate.replace('{{content}}', plan[i].html),
+            snapshot.disableSystemPrompt
+          ),
           temperature: snapshot.summary?.gen?.temperature || snapshot.gen.temperature,
           max_tokens: maxTokensLocal,
           stream: !!snapshot.stream.enabled
@@ -6188,10 +6225,13 @@
       const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
 
       // 固定prompt token（不含正文）
-      const promptTokens = await estimatePromptTokensFromMessages([
-        { role: 'system', content: s.prompt.system || '' },
-        { role: 'user', content: (s.prompt.userTemplate || '').replace('{{content}}', '') }
-      ]);
+      const promptTokens = await estimatePromptTokensFromMessages(
+        buildMessages(
+          s.prompt.system || '',
+          (s.prompt.userTemplate || '').replace('{{content}}', ''),
+          s.disableSystemPrompt
+        )
+      );
 
       const cap1 = maxT / ratio;
       const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
