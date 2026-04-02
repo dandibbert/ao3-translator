@@ -24,7 +24,7 @@
     defaults: {
       api: { baseUrl: '', path: 'v1/chat/completions', key: '' },
       model: { id: '', contextWindow: 16000 },
-      gen: { maxTokens: 7000, temperature: 0.7, top_p: 1 },
+      gen: { maxTokens: 7000, temperature: 0.7, top_p: 1, omitMaxTokensInRequest: false },
       translate: {
         model: { id: '', contextWindow: 16000 },
         gen: { maxTokens: 7000, temperature: 0.7, top_p: 1 },
@@ -667,6 +667,10 @@
               <label>下载服务URL</label>
               <input id="ao3x-download-worker" type="text" placeholder=""/>
             </div>
+            <div class="ao3x-field">
+              <label><input id="ao3x-omit-max-tokens" type="checkbox"/> 请求时不发送 Max Tokens</label>
+              <span class="ao3x-hint">仅影响 API 请求，不影响分块、长度估算与重试扩容。</span>
+            </div>
             <div class="ao3x-switches">
               <label class="ao3x-switch">
                 <input id="ao3x-stream" type="checkbox" checked/>
@@ -914,6 +918,7 @@
       $('#ao3x-summary-maxt').value = s.summary?.gen?.maxTokens || s.gen?.maxTokens || 7000;
       $('#ao3x-summary-temp').value = s.summary?.gen?.temperature || s.gen?.temperature || 0.7;
       $('#ao3x-summary-reasoning').value = String(s.summary?.reasoningEffort ?? -1);
+      $('#ao3x-omit-max-tokens').checked = !!s.gen?.omitMaxTokensInRequest;
 
       $('#ao3x-sys').value = s.prompt.system; $('#ao3x-user').value = s.prompt.userTemplate;
       $('#ao3x-stream').checked = !!s.stream.enabled; $('#ao3x-stream-minframe').value = String(s.stream.minFrameMs ?? 40);
@@ -1847,7 +1852,22 @@
     if (!payload || typeof payload !== 'object') return payload;
     const effort = normalizeReasoningEffortValue(effortValue);
     if (effort == null) return payload;
+    payload.reasoning_effort = effort;
+    if (effort === 'none') {
+      payload.reasoning = { effort, enabled: false };
+      payload.thinking = { type: 'disabled' };
+      payload.chat_template_kwargs = { thinking: false };
+      return payload;
+    }
     payload.reasoning = { effort };
+    return payload;
+  }
+  function applyMaxTokens(payload, maxTokens, omitMaxTokensInRequest) {
+    if (!payload || typeof payload !== 'object') return payload;
+    if (omitMaxTokensInRequest) return payload;
+    const parsedMaxTokens = Number(maxTokens);
+    if (!Number.isFinite(parsedMaxTokens) || parsedMaxTokens <= 0 || !Number.isInteger(parsedMaxTokens)) return payload;
+    payload.max_tokens = parsedMaxTokens;
     return payload;
   }
 
@@ -1886,7 +1906,8 @@
       },
       gen: {
         maxTokens: parseInt($('#ao3x-translate-maxt', panel).value, 10) || cur.gen?.maxTokens || 7000,
-        temperature: parseFloat($('#ao3x-translate-temp', panel).value) || cur.gen?.temperature || 0.7
+        temperature: parseFloat($('#ao3x-translate-temp', panel).value) || cur.gen?.temperature || 0.7,
+        omitMaxTokensInRequest: $('#ao3x-omit-max-tokens', panel).checked
       },
       translate: {
         model: {
@@ -4410,9 +4431,9 @@
             s.disableSystemPrompt
           ),
           temperature: s.gen.temperature,
-          max_tokens: s.gen.maxTokens,
           stream: !!s.stream.enabled
         };
+        applyMaxTokens(payload, s.gen.maxTokens, s.gen?.omitMaxTokensInRequest);
         applyReasoningEffort(payload, s.translate?.reasoningEffort);
 
         postChatWithRetry({
@@ -4586,9 +4607,9 @@
             s.disableSystemPrompt
           ),
           temperature: s.gen.temperature,
-          max_tokens: s.gen.maxTokens,
           stream: !!s.stream.enabled
         };
+        applyMaxTokens(payload, s.gen.maxTokens, s.gen?.omitMaxTokensInRequest);
         applyReasoningEffort(payload, s.translate?.reasoningEffort);
 
         postChatWithRetry({
@@ -4815,9 +4836,9 @@
           s.disableSystemPrompt
         ),
         temperature: s.gen.temperature,
-        max_tokens: maxTokensLocal,
         stream: !!s.stream.enabled
       };
+      applyMaxTokens(payload, maxTokensLocal, s.gen?.omitMaxTokensInRequest);
       applyReasoningEffort(payload, s.translate?.reasoningEffort);
       await postChatWithRetry({
         endpoint, key, stream,
@@ -4910,9 +4931,9 @@
             snapshot.disableSystemPrompt
           ),
           temperature: snapshot.gen.temperature,
-          max_tokens: maxTokensLocal,
           stream: !!snapshot.stream.enabled
         };
+        applyMaxTokens(payload, maxTokensLocal, snapshot.gen?.omitMaxTokensInRequest);
         applyReasoningEffort(payload, snapshot.translate?.reasoningEffort);
 
         postChatWithRetry({
@@ -4947,9 +4968,9 @@
                     retrySnapshot.disableSystemPrompt
                   ),
                   temperature: retrySnapshot.gen.temperature,
-                  max_tokens: newMax,
                   stream: !!retrySnapshot.stream.enabled
                 };
+                applyMaxTokens(retryPayload, newMax, retrySnapshot.gen?.omitMaxTokensInRequest);
                 applyReasoningEffort(retryPayload, retrySnapshot.translate?.reasoningEffort);
                 await postChatWithRetry({
                   endpoint, key, stream, label: `chunk#${i}-retry-max`,
@@ -5240,9 +5261,9 @@
               s.disableSystemPrompt
             ),
             temperature: s.gen.temperature,
-            max_tokens: maxTokensLocal,
             stream: !!s.stream.enabled
           };
+          applyMaxTokens(payload, maxTokensLocal, s.gen?.omitMaxTokensInRequest);
           applyReasoningEffort(payload, s.translate?.reasoningEffort);
 
           postChatWithRetry({
@@ -5887,9 +5908,9 @@
           s.disableSystemPrompt
         ),
         temperature: s.summary?.gen?.temperature || s.gen.temperature,
-        max_tokens: maxTokensLocal,
         stream: !!s.stream.enabled
       };
+      applyMaxTokens(payload, maxTokensLocal, s.gen?.omitMaxTokensInRequest);
       applyReasoningEffort(payload, s.summary?.reasoningEffort);
 
       await postChatWithRetry({
@@ -5986,9 +6007,9 @@
             snapshot.disableSystemPrompt
           ),
           temperature: snapshot.summary?.gen?.temperature || snapshot.gen.temperature,
-          max_tokens: maxTokensLocal,
           stream: !!snapshot.stream.enabled
         };
+        applyMaxTokens(payload, maxTokensLocal, snapshot.gen?.omitMaxTokensInRequest);
         applyReasoningEffort(payload, snapshot.summary?.reasoningEffort);
 
         postChatWithRetry({
