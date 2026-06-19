@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.2.9
+// @version      1.3.0
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -21,6 +21,7 @@
   /* ================= Settings & Utils ================= */
   const NS = 'ao3_full_translate_v039';
   const settings = {
+    _cache: null,
     defaults: {
       api: { baseUrl: '', path: 'v1/chat/completions', key: '' },
       model: { id: '', contextWindow: 16000 },
@@ -61,11 +62,21 @@
     },
     get() {
       try {
+        if (this._cache) return structuredClone(this._cache);
         const saved = GM_Get(NS);
-        return saved ? deepMerge(structuredClone(this.defaults), saved) : structuredClone(this.defaults);
-      } catch { return structuredClone(this.defaults); }
+        this._cache = saved ? deepMerge(structuredClone(this.defaults), saved) : structuredClone(this.defaults);
+        return structuredClone(this._cache);
+      } catch {
+        this._cache = structuredClone(this.defaults);
+        return structuredClone(this._cache);
+      }
     },
-    set(p) { const merged = deepMerge(this.get(), p); GM_Set(NS, merged); return merged; }
+    set(p) {
+      const merged = deepMerge(this.get(), p);
+      this._cache = structuredClone(merged);
+      GM_Set(NS, merged);
+      return structuredClone(this._cache);
+    }
   };
   function GM_Get(k) { try { return GM_getValue(k); } catch { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } } }
   function GM_Set(k, v) { try { GM_setValue(k, v); } catch { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } } }
@@ -899,8 +910,19 @@
 
       UI._panel = panel; UI._mask = mask; UI.syncPanel();
     },
+    flushPanelSettings({ toast = false } = {}) {
+      const panel = UI._panel;
+      if (!panel || panel.style.display === 'none') return settings.get();
+      const newSettings = settings.set(collectPanelValues(panel));
+      applyFontSize();
+      if (typeof ChunkIndicator !== 'undefined' && ChunkIndicator.settings) {
+        ChunkIndicator.settings.showPreview = !!(newSettings.chunkIndicator?.showPreview);
+      }
+      if (toast) saveToast();
+      return newSettings;
+    },
     openPanel() { UI.syncPanel(); UI._mask.style.display = 'block'; UI._panel.style.display = 'block'; UI.hideFAB(); },
-    closePanel() { UI._mask.style.display = 'none'; UI._panel.style.display = 'none'; UI.showFAB(); },
+    closePanel() { UI.flushPanelSettings(); UI._mask.style.display = 'none'; UI._panel.style.display = 'none'; UI.showFAB(); },
     hideFAB() { const fab = $('.ao3x-fab-wrap'); if (fab) fab.classList.add('hidden'); },
     showFAB() { const fab = $('.ao3x-fab-wrap'); if (fab) fab.classList.remove('hidden'); },
     syncPanel() {
@@ -2271,6 +2293,17 @@
   /* ================= OpenAI-compatible + SSE ================= */
   function resolveEndpoint(baseUrl, apiPath) { if (!baseUrl) throw new Error('请在设置中填写 Base URL'); const hasV1 = /\/v1\//.test(baseUrl); return hasV1 ? baseUrl : `${trimSlash(baseUrl)}/${trimSlash(apiPath || 'v1/chat/completions')}`; }
   function resolveModelsEndpoint(baseUrl) { if (!baseUrl) throw new Error('请填写 Base URL'); const m = baseUrl.match(/^(.*?)(\/v1\/.*)$/); return m ? `${m[1]}/v1/models` : `${trimSlash(baseUrl)}/v1/models`; }
+  function normalizeChatContent(content) {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    return content.map(part => {
+      if (typeof part === 'string') return part;
+      return part?.text || part?.content || '';
+    }).join('');
+  }
+  function extractChoiceContent(choice) {
+    return normalizeChatContent(choice?.message?.content ?? choice?.delta?.content ?? choice?.text);
+  }
   async function fetchJSON(url, key, body) {
     try {
       const res = await gmFetch(url, {
@@ -2283,7 +2316,9 @@
       }).catch(err => {
         throw new RequestError(err?.message || '网络请求失败', { cause: err, isNetworkError: true });
       });
-      const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+      const retryAfterMs = parseRetryAfter(
+        typeof res.headers?.get === 'function' ? res.headers.get('retry-after') : ''
+      );
       if (!res.ok) {
         const t = await res.text();
         throw new RequestError(`HTTP ${res.status}: ${t.slice(0, 500)}`, {
@@ -2333,8 +2368,9 @@
       onDone && onDone();
     } else {
       const full = await fetchJSON(endpoint, key, payload);
-      let content = full?.choices?.[0]?.message?.content || '';
-      const fr = full?.choices?.[0]?.finish_reason || null;
+      const choice = full?.choices?.[0];
+      let content = extractChoiceContent(choice);
+      const fr = choice?.finish_reason || null;
       // 过滤思考内容，只保留非思考内容作为译文
       if (content) {
         content = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')  // 标准XML标签格式
@@ -2344,6 +2380,7 @@
           .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')  // 行首的内心独白前缀（必须有双换行）
           .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');  // 中文标签格式
       }
+      if (!content) throw new RequestError('响应未包含可渲染译文', { noRetry: true });
       onDelta && onDelta(content); onFinishReason && onFinishReason(fr); onDone && onDone();
     }
   }
@@ -2353,6 +2390,8 @@
       let buf = '';
       let eventBuf = [];
       let sawDone = false;
+      let emittedDelta = false;
+      let sawSSEFrame = false;
       let finishReason = null;
       let req = null;
 
@@ -2382,6 +2421,29 @@
         if (hardTimer) clearTimeout(hardTimer);
       };
 
+      const responseTextOf = (r) => (typeof r?.responseText === 'string' ? r.responseText : '');
+
+      const processChatCompletionJSON = (text) => {
+        const raw = (text || '').trim();
+        if (!raw || raw.startsWith('data:')) return false;
+        try {
+          const j = JSON.parse(raw);
+          const choice = j?.choices?.[0];
+          if (!choice) return false;
+          if (typeof choice.finish_reason === 'string') finishReason = choice.finish_reason;
+          const content = extractChoiceContent(choice);
+          if (content) {
+            emittedDelta = true;
+            onDelta(content);
+            lastTick = performance.now();
+          }
+          d('sse:fallback-json', { label, finishReason, hasContent: !!content });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
       const processChunk = (text) => {
         if (!text) return;
         buf += text;
@@ -2390,6 +2452,7 @@
 
         for (const line of lines) {
           if (line.startsWith('data:')) {
+            sawSSEFrame = true;
             const data = line.slice(5).trim();
             if (data === '[DONE]') {
               flushEvent();
@@ -2410,7 +2473,7 @@
         try {
           const j = JSON.parse(joined);
           const choice = j?.choices?.[0];
-          let delta = choice?.delta?.content ?? choice?.text ?? '';
+          let delta = extractChoiceContent(choice);
           if (delta) {
             delta = delta.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
               .replace(/<think>[\s\S]*?<\/think>/g, '')
@@ -2421,51 +2484,178 @@
           }
           if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
           if (delta) {
+            emittedDelta = true;
             onDelta(delta);
             lastTick = performance.now();
           }
         } catch (e) { d('sse:parse-error', { label, payload: joined }); }
       };
 
-      req = GM_xmlhttpRequest({
-        method: 'POST',
-        url: url,
-        headers: {
-          'content-type': 'application/json',
-          ...(key ? { 'authorization': `Bearer ${key}` } : {})
-        },
-        data: JSON.stringify(body),
-        onprogress: (r) => {
-          if (sawDone) return;
-          const newSnippet = r.responseText.slice(lastTxtLen);
-          lastTxtLen = r.responseText.length;
-          if (newSnippet) {
-            lastTick = performance.now();
-            processChunk(newSnippet);
-          }
-        },
-        onload: (r) => {
+      const finishSuccess = (source) => {
+        if (!emittedDelta) {
           cleanup();
-          if (r.status >= 200 && r.status < 300) {
-            if (buf.trim()) processChunk(''); // Try to flush remainder
-            if (typeof onFinishReason === 'function') onFinishReason(finishReason);
-            d('sse:complete', { label, finishReason });
-            resolve();
-          } else {
-            reject(new RequestError(`HTTP ${r.status}: ${r.responseText.slice(0, 500)}`, { status: r.status }));
-          }
-        },
-        onerror: (e) => {
-          cleanup();
-          reject(new RequestError('Network error', { isNetworkError: true }));
-        },
-        ontimeout: () => {
-          cleanup();
-          reject(new RequestError('Request timeout', { isTimeout: true }));
+          reject(new RequestError('响应未包含可渲染译文', { noRetry: true }));
+          return;
         }
+        cleanup();
+        if (typeof onFinishReason === 'function') onFinishReason(finishReason);
+        d('sse:complete', { label, finishReason, source });
+        resolve();
+      };
+
+      const finishTextResponse = (responseText, source) => {
+        const handledAsJSON = !emittedDelta && processChatCompletionJSON(responseText);
+        if (!handledAsJSON) {
+          if (!sawDone && responseText.length > lastTxtLen) {
+            processChunk(responseText.slice(lastTxtLen));
+            lastTxtLen = responseText.length;
+          }
+          if (buf.trim()) processChunk('\n'); // Try to flush remainder
+          flushEvent();
+        }
+        finishSuccess(source);
+      };
+
+      const startGMRequest = () => {
+        req = GM_xmlhttpRequest({
+          method: 'POST',
+          url: url,
+          headers: {
+            'content-type': 'application/json',
+            ...(key ? { 'authorization': `Bearer ${key}` } : {})
+          },
+          data: JSON.stringify(body),
+          onprogress: (r) => {
+            if (sawDone) return;
+            const responseText = responseTextOf(r);
+            if (responseText.length <= lastTxtLen) return;
+            const newSnippet = responseText.slice(lastTxtLen);
+            if (!lastTxtLen) {
+              d('sse:first-progress', { label, source: 'gm', head: newSnippet.slice(0, 80) });
+            }
+            lastTxtLen = responseText.length;
+            if (newSnippet) {
+              lastTick = performance.now();
+              processChunk(newSnippet);
+            }
+          },
+          onload: (r) => {
+            const responseText = responseTextOf(r);
+            if (r.status >= 200 && r.status < 300) {
+              d('sse:onload', {
+                label,
+                source: 'gm',
+                status: r.status,
+                sawSSEFrame,
+                emittedDelta,
+                responseLength: responseText.length,
+                headers: r.responseHeaders || '',
+                head: responseText.trim().slice(0, 80)
+              });
+              finishTextResponse(responseText, 'gm');
+            } else {
+              cleanup();
+              reject(new RequestError(`HTTP ${r.status}: ${responseText.slice(0, 500)}`, { status: r.status }));
+            }
+          },
+          onerror: (e) => {
+            cleanup();
+            reject(new RequestError('Network error', { isNetworkError: true }));
+          },
+          ontimeout: () => {
+            cleanup();
+            reject(new RequestError('Request timeout', { isTimeout: true }));
+          }
+        });
+      };
+
+      const tryNativeStream = async () => {
+        if (typeof fetch !== 'function' || typeof AbortController !== 'function' || typeof TextDecoder !== 'function') {
+          return false;
+        }
+        const controller = new AbortController();
+        req = controller;
+        let fullText = '';
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              ...(key ? { 'authorization': `Bearer ${key}` } : {})
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal
+          });
+          const contentType = res.headers?.get?.('content-type') || '';
+          d('sse:native-start', { label, status: res.status, contentType });
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            cleanup();
+            reject(new RequestError(`HTTP ${res.status}: ${errText.slice(0, 500)}`, { status: res.status }));
+            return true;
+          }
+          if (!res.body || typeof res.body.getReader !== 'function') {
+            fullText = await res.text();
+            d('sse:native-onload', {
+              label,
+              status: res.status,
+              sawSSEFrame,
+              emittedDelta,
+              responseLength: fullText.length,
+              head: fullText.trim().slice(0, 80)
+            });
+            finishTextResponse(fullText, 'native-fetch-text');
+            return true;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let firstChunk = true;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = decoder.decode(value, { stream: true });
+            if (!text) continue;
+            fullText += text;
+            if (firstChunk) {
+              d('sse:first-progress', { label, source: 'native-fetch', head: text.slice(0, 80) });
+              firstChunk = false;
+            }
+            lastTick = performance.now();
+            processChunk(text);
+            if (sawDone) break;
+          }
+          const tail = decoder.decode();
+          if (tail) {
+            fullText += tail;
+            processChunk(tail);
+          }
+          d('sse:native-end', {
+            label,
+            sawSSEFrame,
+            emittedDelta,
+            responseLength: fullText.length,
+            head: fullText.trim().slice(0, 80)
+          });
+          lastTxtLen = fullText.length;
+          finishTextResponse(fullText, 'native-fetch');
+          return true;
+        } catch (e) {
+          if (!emittedDelta) {
+            d('sse:native-fallback-gm', { label, error: e?.message || String(e) });
+            return false;
+          }
+          cleanup();
+          reject(new RequestError(e?.message || 'Network error', { cause: e, isNetworkError: true }));
+          return true;
+        }
+      };
+
+      tryNativeStream().then(handled => {
+        if (!handled) startGMRequest();
       });
-    });
-  }
+      });
+    }
 
   async function getModels() {
     const s = settings.get(); const url = resolveModelsEndpoint(s.api.baseUrl);
