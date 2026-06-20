@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      1.3.0
+// @version      1.3.1
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2293,16 +2293,130 @@
   /* ================= OpenAI-compatible + SSE ================= */
   function resolveEndpoint(baseUrl, apiPath) { if (!baseUrl) throw new Error('请在设置中填写 Base URL'); const hasV1 = /\/v1\//.test(baseUrl); return hasV1 ? baseUrl : `${trimSlash(baseUrl)}/${trimSlash(apiPath || 'v1/chat/completions')}`; }
   function resolveModelsEndpoint(baseUrl) { if (!baseUrl) throw new Error('请填写 Base URL'); const m = baseUrl.match(/^(.*?)(\/v1\/.*)$/); return m ? `${m[1]}/v1/models` : `${trimSlash(baseUrl)}/v1/models`; }
+  const REASONING_PART_TYPE_RE = /(?:reason|think|thought|analysis|cot|chain[_-]?of[_-]?thought)/i;
   function normalizeChatContent(content) {
     if (typeof content === 'string') return content;
+    if (content && typeof content === 'object' && !Array.isArray(content)) {
+      const typeHint = [
+        content.type,
+        content.role,
+        content.name,
+        content.category,
+        content.content_type
+      ].filter(Boolean).join(' ');
+      if (REASONING_PART_TYPE_RE.test(typeHint)) return '';
+      if (Object.prototype.hasOwnProperty.call(content, 'text')) return normalizeChatContent(content.text);
+      if (Object.prototype.hasOwnProperty.call(content, 'content')) return normalizeChatContent(content.content);
+      return '';
+    }
     if (!Array.isArray(content)) return '';
-    return content.map(part => {
-      if (typeof part === 'string') return part;
-      return part?.text || part?.content || '';
-    }).join('');
+    return content.map(part => normalizeChatContent(part)).join('');
   }
   function extractChoiceContent(choice) {
-    return normalizeChatContent(choice?.message?.content ?? choice?.delta?.content ?? choice?.text);
+    const message = choice?.message || {};
+    const delta = choice?.delta || {};
+    // MiniMax/DeepSeek 等推理模型可能把 reasoning_content 与 content 交错返回。
+    // 渲染层只消费最终可见输出字段，显式忽略 reasoning/thinking 字段。
+    return normalizeChatContent(message.content ?? delta.content ?? choice?.content ?? choice?.text);
+  }
+  function stripReasoningText(content) {
+    if (!content) return '';
+    return content
+      .replace(/<thinking\b[^>]*>[\s\S]*?(?:<\/thinking>|$)/gi, '')
+      .replace(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, '')
+      .replace(/<\/thinking>/gi, '')
+      .replace(/<\/think>/gi, '')
+      .replace(/^Thought:\s*[^\n]*\n\n/gm, '')
+      .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')
+      .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')
+      .replace(/\[思考\][\s\S]*?(?:\[\/思考\]|$)/g, '')
+      .replace(/\[\/思考\]/g, '');
+  }
+  function createReasoningTextFilter() {
+    const openMarkers = ['<thinking', '<think', '[思考]'];
+    const closeMarkers = ['</thinking>', '</think>', '[/思考]'];
+    const maxMarkerLen = Math.max(...openMarkers.concat(closeMarkers).map(s => s.length));
+    let pending = '';
+    let inReasoning = false;
+
+    const longestMarkerPrefixSuffix = (text, markers) => {
+      const limit = Math.min(maxMarkerLen - 1, text.length);
+      for (let len = limit; len > 0; len--) {
+        const suffix = text.slice(-len).toLowerCase();
+        if (markers.some(marker => marker.toLowerCase().startsWith(suffix))) return len;
+      }
+      return 0;
+    };
+
+    const findFirstMarker = (text, markers) => {
+      let best = null;
+      const lower = text.toLowerCase();
+      markers.forEach(marker => {
+        const idx = lower.indexOf(marker.toLowerCase());
+        if (idx >= 0 && (!best || idx < best.idx)) best = { idx, marker };
+      });
+      return best;
+    };
+
+    const consumeOpeningTag = (text, marker) => {
+      if (marker.startsWith('<')) {
+        const end = text.indexOf('>');
+        return end >= 0 ? end + 1 : text.length;
+      }
+      return marker.length;
+    };
+
+    return {
+      push(text, flush = false) {
+        let input = pending + (text || '');
+        let output = '';
+        pending = '';
+        while (input) {
+          if (inReasoning) {
+            const close = findFirstMarker(input, closeMarkers);
+            if (!close) {
+              if (!flush) {
+                const keepLen = longestMarkerPrefixSuffix(input, closeMarkers);
+                pending = keepLen ? input.slice(-keepLen) : '';
+              }
+              input = '';
+              continue;
+            }
+            input = input.slice(close.idx + close.marker.length);
+            inReasoning = false;
+            continue;
+          }
+
+          const open = findFirstMarker(input, openMarkers);
+          if (!open) {
+            if (!flush) {
+              const keepLen = longestMarkerPrefixSuffix(input, openMarkers);
+              if (keepLen) {
+                output += input.slice(0, -keepLen);
+                pending = input.slice(-keepLen);
+              } else {
+                output += input;
+              }
+            } else {
+              output += input;
+            }
+            input = '';
+            continue;
+          }
+
+          output += input.slice(0, open.idx);
+          input = input.slice(open.idx + consumeOpeningTag(input.slice(open.idx), open.marker));
+          inReasoning = true;
+        }
+        return stripReasoningText(output);
+      },
+      flush() {
+        const tail = inReasoning ? '' : pending;
+        pending = '';
+        inReasoning = false;
+        return stripReasoningText(tail);
+      }
+    };
   }
   async function fetchJSON(url, key, body) {
     try {
@@ -2371,15 +2485,7 @@
       const choice = full?.choices?.[0];
       let content = extractChoiceContent(choice);
       const fr = choice?.finish_reason || null;
-      // 过滤思考内容，只保留非思考内容作为译文
-      if (content) {
-        content = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')  // 标准XML标签格式
-          .replace(/<think>[\s\S]*?<\/think>/g, '')  // 简化XML标签格式
-          .replace(/^Thought:\s*[^\n]*\n\n/gm, '')  // 行首的Thought前缀格式（必须有双换行）
-          .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')  // 行首的思考过程前缀（必须有双换行）
-          .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')  // 行首的内心独白前缀（必须有双换行）
-          .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');  // 中文标签格式
-      }
+      content = stripReasoningText(content);
       if (!content) throw new RequestError('响应未包含可渲染译文', { noRetry: true });
       onDelta && onDelta(content); onFinishReason && onFinishReason(fr); onDone && onDone();
     }
@@ -2394,6 +2500,7 @@
       let sawSSEFrame = false;
       let finishReason = null;
       let req = null;
+      const visibleContentFilter = createReasoningTextFilter();
 
       const cleanReq = () => { if (req) { try { req.abort(); } catch { } req = null; } };
 
@@ -2431,7 +2538,7 @@
           const choice = j?.choices?.[0];
           if (!choice) return false;
           if (typeof choice.finish_reason === 'string') finishReason = choice.finish_reason;
-          const content = extractChoiceContent(choice);
+          const content = stripReasoningText(extractChoiceContent(choice));
           if (content) {
             emittedDelta = true;
             onDelta(content);
@@ -2473,15 +2580,7 @@
         try {
           const j = JSON.parse(joined);
           const choice = j?.choices?.[0];
-          let delta = extractChoiceContent(choice);
-          if (delta) {
-            delta = delta.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
-              .replace(/<think>[\s\S]*?<\/think>/g, '')
-              .replace(/^Thought:\s*[^\n]*\n\n/gm, '')
-              .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')
-              .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')
-              .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');
-          }
+          const delta = visibleContentFilter.push(extractChoiceContent(choice));
           if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
           if (delta) {
             emittedDelta = true;
@@ -2512,6 +2611,11 @@
           }
           if (buf.trim()) processChunk('\n'); // Try to flush remainder
           flushEvent();
+          const tail = visibleContentFilter.flush();
+          if (tail) {
+            emittedDelta = true;
+            onDelta(tail);
+          }
         }
         finishSuccess(source);
       };
